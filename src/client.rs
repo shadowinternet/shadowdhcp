@@ -32,13 +32,11 @@ fn dhcpv6_test_request() -> v6::RelayMessage {
     let mut relay_opts = v6::DhcpOptions::new();
     relay_opts.insert(v6::DhcpOption::RelayMsg(v6::RelayMessageData::Message(msg)));
 
-    let relay_msg = v6::RelayMessage {
+    v6::RelayMessage {
         msg_type: v6::MessageType::RelayForw,
         hop_count: 0,
         link_addr: Ipv6Addr::new(8, 8, 8, 8, 8, 8, 8, 8),
         peer_addr: Ipv6Addr::new(9, 9, 9, 9, 9, 9, 9, 9),
         opts: relay_opts,
-    };
-
-    relay_msg
+    }
 }
