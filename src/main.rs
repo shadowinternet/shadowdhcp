@@ -1,15 +1,15 @@
 use dhcproto::{
-    v6::{self, DhcpOption, DhcpOptions, StatusCode},
+    v6::{self, DhcpOption, DhcpOptions, IAAddr, Message, RelayMessage, StatusCode, IAPD},
     Decodable, Encodable,
 };
 use ipnet::Ipv6Net;
 use std::{
     collections::HashMap,
+    io,
     net::{Ipv6Addr, UdpSocket},
     time::{Duration, Instant},
 };
 
-// handle relaying
 // handle retransmissions
 // metrics to clickhouse
 // reservations from netbox
@@ -108,7 +108,43 @@ fn main() {
 
     // listen for messages
     loop {
-        let (amount, _src) = socket.recv_from(&mut read_buf).expect("udp receive");
+        // if the src is not listening on response, it may send a ICMP host unreachable
+        // message which we need to handle
+        let (amount, src) = match socket.recv_from(&mut read_buf) {
+            Ok((amount, src)) => {
+                println!("Received {amount} bytes from {src:?}");
+                (amount, src)
+            }
+            Err(err) => {
+                eprintln!("Error receiving: {err:?}");
+                match err.kind() {
+                    io::ErrorKind::NotFound => todo!(),
+                    io::ErrorKind::PermissionDenied => todo!(),
+                    io::ErrorKind::ConnectionRefused => todo!(),
+                    io::ErrorKind::ConnectionReset => {
+                        eprintln!("Sent response to host that responded with ICMP unreachable");
+                        continue;
+                    }
+                    io::ErrorKind::ConnectionAborted => todo!(),
+                    io::ErrorKind::NotConnected => todo!(),
+                    io::ErrorKind::AddrInUse => todo!(),
+                    io::ErrorKind::AddrNotAvailable => todo!(),
+                    io::ErrorKind::BrokenPipe => todo!(),
+                    io::ErrorKind::AlreadyExists => todo!(),
+                    io::ErrorKind::WouldBlock => todo!(),
+                    io::ErrorKind::InvalidInput => todo!(),
+                    io::ErrorKind::InvalidData => todo!(),
+                    io::ErrorKind::TimedOut => todo!(),
+                    io::ErrorKind::WriteZero => todo!(),
+                    io::ErrorKind::Interrupted => todo!(),
+                    io::ErrorKind::Unsupported => todo!(),
+                    io::ErrorKind::UnexpectedEof => todo!(),
+                    io::ErrorKind::OutOfMemory => todo!(),
+                    io::ErrorKind::Other => todo!(),
+                    _ => todo!(),
+                }
+            }
+        };
         match v6::RelayMessage::from_bytes(&read_buf[..amount]) {
             Ok(msg) => {
                 // get the inner msg from the option
@@ -124,9 +160,21 @@ fn main() {
                 };
 
                 if let Some(response_msg) = handle_message(&mut storage, inner_msg) {
+                    // wrap the message in a RelayRepl
+                    let mut relay_reply_opts = DhcpOptions::new();
+                    relay_reply_opts.insert(DhcpOption::RelayMsg(v6::RelayMessageData::Message(
+                        response_msg,
+                    )));
+                    let relay_msg = RelayMessage {
+                        msg_type: v6::MessageType::RelayRepl,
+                        hop_count: 0,
+                        link_addr: Ipv6Addr::new(1, 1, 1, 1, 1, 1, 1, 1),
+                        peer_addr: Ipv6Addr::new(2, 2, 2, 2, 2, 2, 2, 2),
+                        opts: relay_reply_opts,
+                    };
                     // opts.insert(v6::DhcpOption::RelayMsg(v6::RelayMessage::))
-                    let write_buf = response_msg.to_vec().expect("encoding response msg");
-                    match socket.send(&write_buf) {
+                    let write_buf = relay_msg.to_vec().expect("encoding response msg");
+                    match socket.send_to(&write_buf, src) {
                         Ok(sent) => println!("responded with {sent} bytes"),
                         Err(e) => eprintln!("Problem sending respones message: {e}"),
                     }
@@ -148,58 +196,80 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             // respond with IA_NA option and or IA_PD option,
 
             println!("Received Solicit message");
-            let opts = msg.opts();
-            for opt in opts.iter() {
-                match opt {
-                    v6::DhcpOption::ClientId(id) => {
-                        println!("option ClientID: {:?}", id);
-                        let reserved_address = storage.duid_reservation.get(id).cloned();
-                        match reserved_address {
-                            Some(reservation) => {
-                                let lease = Lease {
-                                    first_leased: Instant::now(),
-                                    last_leased: Instant::now(),
-                                    valid: Duration::from_secs(60 * 60 * 8),
-                                    source: LeaseSource::Duid,
-                                    duid: id.to_owned(),
-                                    mac: None,
-                                };
+            let client_id = client_id(&msg)?;
+            println!("ClientID: {:?}", client_id);
+            let reserved_address = storage.duid_reservation.get(&client_id).cloned();
+            match reserved_address {
+                Some(reservation) => {
+                    let lease = Lease {
+                        first_leased: Instant::now(),
+                        last_leased: Instant::now(),
+                        valid: Duration::from_secs(60 * 60 * 8),
+                        source: LeaseSource::Duid,
+                        duid: client_id,
+                        mac: None,
+                    };
 
-                                storage.leased_new(&reservation, &lease);
-                            }
-                            None => eprintln!("Solicit request with no reservation for DUID"),
-                        }
-                    }
-                    // v6::DhcpOption::ServerId(_) => todo!(),
-                    // v6::DhcpOption::IANA(_) => todo!(),
-                    // v6::DhcpOption::IATA(_) => todo!(),
-                    // v6::DhcpOption::IAAddr(_) => todo!(),
-                    // v6::DhcpOption::ORO(_) => todo!(),
-                    // v6::DhcpOption::Preference(_) => todo!(),
-                    // v6::DhcpOption::ElapsedTime(_) => todo!(),
-                    // v6::DhcpOption::RelayMsg(_) => todo!(),
-                    // v6::DhcpOption::Authentication(_) => todo!(),
-                    // v6::DhcpOption::ServerUnicast(_) => todo!(),
-                    // v6::DhcpOption::StatusCode(_) => todo!(),
-                    // v6::DhcpOption::RapidCommit => todo!(),
-                    // v6::DhcpOption::UserClass(_) => todo!(),
-                    // v6::DhcpOption::VendorClass(_) => todo!(),
-                    // v6::DhcpOption::VendorOpts(_) => todo!(),
-                    // v6::DhcpOption::InterfaceId(_) => todo!(),
-                    // v6::DhcpOption::ReconfMsg(_) => todo!(),
-                    // v6::DhcpOption::ReconfAccept => todo!(),
-                    // v6::DhcpOption::DomainNameServers(_) => todo!(),
-                    // v6::DhcpOption::DomainSearchList(_) => todo!(),
-                    // v6::DhcpOption::IAPD(_) => todo!(),
-                    // v6::DhcpOption::IAPrefix(_) => todo!(),
-                    // v6::DhcpOption::InformationRefreshTime(_) => todo!(),
-                    // v6::DhcpOption::Unknown(_) => todo!(),
-                    _ => {
-                        eprintln!("Unrecognized option: {:?}", opt);
-                    }
+                    storage.leased_new(&reservation, &lease);
+
+                    // respond with a Reply message
+                    let preferred_lifetime = 120;
+                    let valid_lifetime = 240;
+                    let prefix_len = 56;
+                    let prefix_ip = Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8);
+
+                    let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
+                    let mut opts = v6::DhcpOptions::new();
+                    opts.insert(DhcpOption::StatusCode(StatusCode {
+                        status: v6::Status::Success,
+                        msg: String::from(""),
+                    }));
+
+                    // Reply contains IA_NA address and IA_PD prefix as options.
+                    // These options contain nested options with the actual addresses/prefixes
+                    // ReplyOptions [IAPD[IAPrefix], IANA[IAAddr]]
+
+                    // construct IA_PD information
+                    let mut ia_pd_opts = DhcpOptions::new();
+                    ia_pd_opts.insert(DhcpOption::IAPrefix(v6::IAPrefix {
+                        preferred_lifetime,
+                        valid_lifetime,
+                        prefix_len,
+                        prefix_ip,
+                        opts: DhcpOptions::new(),
+                    }));
+                    // add IA_PD information to Reply message
+                    opts.insert(DhcpOption::IAPD(IAPD {
+                        id: 1,
+                        t1: preferred_lifetime,
+                        t2: valid_lifetime,
+                        opts: ia_pd_opts,
+                    }));
+
+                    // construct IA_NA information
+                    let mut ia_na_opts = DhcpOptions::new();
+                    ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
+                        addr: reservation.na,
+                        preferred_life: preferred_lifetime,
+                        valid_life: valid_lifetime,
+                        opts: DhcpOptions::new(),
+                    }));
+                    // add IA_NA information to Reply message
+                    opts.insert(DhcpOption::IANA(v6::IANA {
+                        id: 1,
+                        t1: preferred_lifetime,
+                        t2: valid_lifetime,
+                        opts: ia_na_opts,
+                    }));
+
+                    reply.set_opts(opts);
+                    Some(reply)
+                }
+                None => {
+                    eprintln!("Solicit request with no reservation for DUID");
+                    None
                 }
             }
-            None
         }
         // v6::MessageType::Advertise => todo!(),
         // v6::MessageType::Request => todo!(),
@@ -300,6 +370,13 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             None
         }
     }
+}
+
+fn client_id(msg: &Message) -> Option<Vec<u8>> {
+    msg.opts().iter().find_map(|opt| match opt {
+        v6::DhcpOption::ClientId(id) => Some(id.to_owned()),
+        _ => None,
+    })
 }
 
 #[allow(unused)]
