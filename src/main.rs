@@ -215,8 +215,6 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                     // respond with a Reply message
                     let preferred_lifetime = 120;
                     let valid_lifetime = 240;
-                    let prefix_len = 56;
-                    let prefix_ip = Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8);
 
                     let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
                     let mut opts = v6::DhcpOptions::new();
@@ -234,8 +232,8 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                     ia_pd_opts.insert(DhcpOption::IAPrefix(v6::IAPrefix {
                         preferred_lifetime,
                         valid_lifetime,
-                        prefix_len,
-                        prefix_ip,
+                        prefix_len: reservation.pd.prefix_len(),
+                        prefix_ip: reservation.pd.addr(),
                         opts: DhcpOptions::new(),
                     }));
                     // add IA_PD information to Reply message
