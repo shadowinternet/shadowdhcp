@@ -1,0 +1,20 @@
+[package]
+name = "shadow_dhcpv6"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+default-run = "server"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[dependencies]
+dhcproto = { git = "https://github.com/nocduro/dhcproto.git" }
+ipnet = "2.5"
