@@ -1,4 +1,4 @@
-use dhcproto::{v6, Encodable};
+use dhcproto::{v6, Decodable, Encodable};
 
 use std::net::{Ipv6Addr, UdpSocket};
 
@@ -10,6 +10,13 @@ fn main() {
     socket
         .send_to(&msg, "[::1]:567")
         .expect("couldn't send data");
+
+    let mut recv_buf = vec![0u8; 1500];
+    let recv_bytes = socket.recv(&mut recv_buf).expect("socket recv");
+    println!("received {recv_bytes} bytes in response");
+
+    let msg = v6::RelayMessage::from_bytes(&recv_buf[..recv_bytes]).expect("parsing response");
+    println!("msg: {msg}");
 }
 
 fn dhcpv6_test_request() -> v6::RelayMessage {
@@ -25,7 +32,7 @@ fn dhcpv6_test_request() -> v6::RelayMessage {
     let mut relay_opts = v6::DhcpOptions::new();
     relay_opts.insert(v6::DhcpOption::RelayMsg(v6::RelayMessageData::Message(msg)));
 
-    let mut relay_msg = v6::RelayMessage {
+    let relay_msg = v6::RelayMessage {
         msg_type: v6::MessageType::RelayForw,
         hop_count: 0,
         link_addr: Ipv6Addr::new(8, 8, 8, 8, 8, 8, 8, 8),
