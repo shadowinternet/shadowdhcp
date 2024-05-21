@@ -15,7 +15,6 @@ use std::{
 // reservations from netbox
 // renew of existing lease
 // rapid commit option
-// relays may send Interface-ID option which must be echo'd back in replies
 
 // transaction id: used to match replies to requests
 
@@ -165,11 +164,21 @@ fn main() {
                     relay_reply_opts.insert(DhcpOption::RelayMsg(v6::RelayMessageData::Message(
                         response_msg,
                     )));
+
+                    // reply with InterfaceId if it was included in the original RelayForw message
+                    if let Some(interface_id) = msg
+                        .opts
+                        .iter()
+                        .find(|opt| matches!(opt, v6::DhcpOption::InterfaceId(_)))
+                    {
+                        relay_reply_opts.insert(interface_id.clone());
+                    }
+
                     let relay_msg = RelayMessage {
                         msg_type: v6::MessageType::RelayRepl,
-                        hop_count: 0,
-                        link_addr: Ipv6Addr::new(1, 1, 1, 1, 1, 1, 1, 1),
-                        peer_addr: Ipv6Addr::new(2, 2, 2, 2, 2, 2, 2, 2),
+                        hop_count: msg.hop_count(),
+                        link_addr: msg.link_addr(),
+                        peer_addr: msg.peer_addr(),
                         opts: relay_reply_opts,
                     };
                     // opts.insert(v6::DhcpOption::RelayMsg(v6::RelayMessage::))
