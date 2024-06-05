@@ -15,6 +15,7 @@ use std::{
 // reservations from netbox
 // renew of existing lease
 // rapid commit option
+// message flow: client Solicit -> server Advertise -> client Request -> server Reply
 
 // transaction id: used to match replies to requests
 
@@ -510,6 +511,7 @@ mod tests {
         ];
 
         let msg = v6::RelayMessage::from_bytes(&packet_bytes).unwrap();
+        assert!(matches!(msg.msg_type, MessageType::RelayForw));
         println!("{msg:?}");
     }
 
@@ -532,6 +534,7 @@ mod tests {
         ];
 
         let msg = v6::RelayMessage::from_bytes(&packet_bytes).unwrap();
+        assert!(matches!(msg.msg_type, MessageType::RelayRepl));
         println!("{msg:?}");
     }
 
@@ -554,6 +557,7 @@ mod tests {
             0x40, 0x80, 0x20, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         let msg = v6::RelayMessage::from_bytes(&packet_bytes).unwrap();
+        assert!(matches!(msg.msg_type, MessageType::RelayForw));
         println!("{msg:?}");
     }
 
@@ -575,6 +579,7 @@ mod tests {
             0x00, 0x00, 0x00,
         ];
         let msg = v6::RelayMessage::from_bytes(&packet_bytes).unwrap();
+        assert!(matches!(msg.msg_type, MessageType::RelayRepl));
         println!("{msg:?}");
     }
 }
