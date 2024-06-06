@@ -1,5 +1,5 @@
 use dhcproto::{
-    v6::{self, DhcpOption, DhcpOptions, IAAddr, Message, RelayMessage, StatusCode, IAPD},
+    v6::{self, DhcpOption, DhcpOptions, IAAddr, Message, RelayMessage, StatusCode, IANA, IAPD},
     Decodable, Encodable,
 };
 use ipnet::Ipv6Net;
@@ -212,14 +212,14 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
 
             // Servers MUST discard any Solicit messages that do not include a Client identifier
             // option or that do include a Server Identifier option
-            let client_id = client_id(&msg)?;
-            if server_id(&msg).is_some() {
+            let client_id = msg.client_id()?;
+            if msg.server_id().is_some() {
                 return None;
             }
 
             // Rapid Commit option - The client may request the expedited two-message exchange
             // by adding the Rapid Commit option to the first Solicit request
-            let msg_type = if rapid_commit(&msg) {
+            let msg_type = if msg.rapid_commit() {
                 v6::MessageType::Reply
             } else {
                 v6::MessageType::Advertise
@@ -248,7 +248,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                     // ReplyOptions [IAPD[IAPrefix], IANA[IAAddr]]
 
                     // construct IA_PD information
-                    if has_ia_na_option(&msg) {
+                    if msg.ia_pd().is_some() {
                         let mut ia_pd_opts = DhcpOptions::new();
                         ia_pd_opts.insert(DhcpOption::IAPrefix(v6::IAPrefix {
                             preferred_lifetime: PREFERRED_LIFETIME,
@@ -267,7 +267,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                     }
 
                     // construct IA_NA information
-                    if has_ia_pd_option(&msg) {
+                    if msg.ia_na().is_some() {
                         let mut ia_na_opts = DhcpOptions::new();
                         ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
                             addr: reservation.na,
@@ -284,7 +284,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                         }));
                     }
 
-                    opts.insert(DhcpOption::ServerId(shadow_server_id().to_vec()));
+                    opts.insert(DhcpOption::ServerId(server_id().to_vec()));
                     opts.insert(DhcpOption::ClientId(client_id.to_vec()));
 
                     reply.set_opts(opts);
@@ -399,40 +399,52 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
     }
 }
 
-fn client_id(msg: &Message) -> Option<&[u8]> {
-    msg.opts().iter().find_map(|opt| match opt {
-        v6::DhcpOption::ClientId(id) => Some(id.as_slice()),
-        _ => None,
-    })
+trait ShadowMessageExt {
+    fn client_id(&self) -> Option<&[u8]>;
+    fn server_id(&self) -> Option<&[u8]>;
+    fn rapid_commit(&self) -> bool;
+    fn ia_na(&self) -> Option<&IANA>;
+    fn ia_pd(&self) -> Option<&IAPD>;
 }
 
-fn server_id(msg: &Message) -> Option<&[u8]> {
-    msg.opts().iter().find_map(|opt| match opt {
-        v6::DhcpOption::ServerId(id) => Some(id.as_slice()),
-        _ => None,
-    })
+impl ShadowMessageExt for Message {
+    fn client_id(&self) -> Option<&[u8]> {
+        self.opts().iter().find_map(|opt| match opt {
+            v6::DhcpOption::ClientId(id) => Some(id.as_slice()),
+            _ => None,
+        })
+    }
+
+    fn server_id(&self) -> Option<&[u8]> {
+        self.opts().iter().find_map(|opt| match opt {
+            v6::DhcpOption::ServerId(id) => Some(id.as_slice()),
+            _ => None,
+        })
+    }
+
+    fn rapid_commit(&self) -> bool {
+        self.opts()
+            .iter()
+            .any(|opt| matches!(opt, v6::DhcpOption::RapidCommit))
+    }
+
+    fn ia_na(&self) -> Option<&IANA> {
+        self.opts().iter().find_map(|opt| match opt {
+            v6::DhcpOption::IANA(iana) => Some(iana),
+            _ => None,
+        })
+    }
+
+    fn ia_pd(&self) -> Option<&IAPD> {
+        self.opts().iter().find_map(|opt| match opt {
+            v6::DhcpOption::IAPD(iapd) => Some(iapd),
+            _ => None,
+        })
+    }
 }
 
-fn shadow_server_id() -> [u8; 16] {
+fn server_id() -> [u8; 16] {
     SERVER_ID
-}
-
-fn rapid_commit(msg: &Message) -> bool {
-    msg.opts()
-        .iter()
-        .any(|opt| matches!(opt, v6::DhcpOption::RapidCommit))
-}
-
-fn has_ia_na_option(msg: &Message) -> bool {
-    msg.opts()
-        .iter()
-        .any(|opt| matches!(opt, v6::DhcpOption::IANA(_)))
-}
-
-fn has_ia_pd_option(msg: &Message) -> bool {
-    msg.opts()
-        .iter()
-        .any(|opt| matches!(opt, v6::DhcpOption::IAPD(_)))
 }
 
 #[allow(unused)]
@@ -484,8 +496,8 @@ mod tests {
 
         let msg = v6::Message::from_bytes(&packet_bytes).unwrap();
         assert!(matches!(msg.msg_type(), MessageType::Solicit));
-        assert!(has_ia_na_option(&msg));
-        assert!(has_ia_pd_option(&msg));
+        assert!(msg.ia_na().is_some());
+        assert!(msg.ia_pd().is_some());
         assert_eq!(msg.xid(), [164, 207, 112]);
     }
 
@@ -505,8 +517,8 @@ mod tests {
 
         let msg = v6::Message::from_bytes(&packet_bytes).unwrap();
         assert!(matches!(msg.msg_type(), MessageType::Advertise));
-        assert!(has_ia_na_option(&msg));
-        assert!(has_ia_pd_option(&msg));
+        assert!(msg.ia_na().is_some());
+        assert!(msg.ia_pd().is_some());
         assert_eq!(msg.xid(), [164, 207, 112]);
     }
 
