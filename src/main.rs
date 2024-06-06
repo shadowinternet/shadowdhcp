@@ -11,11 +11,7 @@ use std::{
 };
 
 // handle retransmissions
-// metrics to clickhouse
-// reservations from netbox
 // renew of existing lease
-// rapid commit option
-// message flow: client Solicit -> server Advertise -> client Request -> server Reply
 
 // transaction id: used to match replies to requests
 
@@ -106,14 +102,12 @@ fn main() {
     handle_message(&mut storage, msg);
 
     // only work with relayed messages
-    // bind to address on host with port 567
     let socket = UdpSocket::bind("[::1]:567").expect("udp bind");
     let mut read_buf = [0u8; 1500];
 
     // listen for messages
     loop {
         // if the src is not listening on response, it may send a ICMP host unreachable
-        // message which we need to handle
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
                 println!("Received {amount} bytes from {src:?}");
