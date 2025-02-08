@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     io,
     net::{Ipv6Addr, UdpSocket},
+    str::FromStr,
     time::{Duration, Instant},
 };
 
@@ -91,10 +92,26 @@ fn main() {
             pd: Ipv6Net::new(Ipv6Addr::new(1, 1, 1, 1, 0, 0, 0, 0), 48).unwrap(),
         },
     );
+    duid_reservation.insert(
+        vec![0x00, 0x03, 0x00, 0x01, 0x74, 0x83, 0xC2, 0x5D, 0x7C, 0xE5],
+        ReservedAddress {
+            na: Ipv6Addr::from_str("2605:cb40:8020::2").unwrap(),
+            pd: Ipv6Net::from_str("2605:cb40:8020:100::/56").unwrap(),
+        },
+    );
+
+    let mut mac_reservation = HashMap::new();
+    mac_reservation.insert(
+        String::from("74:83:C2:5D:7C:E5"),
+        ReservedAddress {
+            na: Ipv6Addr::from_str("2605:cb40:8020::2").unwrap(),
+            pd: Ipv6Net::from_str("2605:cb40:8020:100::/56").unwrap(),
+        },
+    );
 
     let mut storage = Storage {
         duid_reservation,
-        mac_reservation: HashMap::new(),
+        mac_reservation,
         current_leases: HashMap::new(),
     };
 
@@ -102,8 +119,10 @@ fn main() {
     handle_message(&mut storage, msg);
 
     // only work with relayed messages
-    let socket = UdpSocket::bind("[::1]:567").expect("udp bind");
-    let mut read_buf = [0u8; 1500];
+    let bind_addr = std::env::var("SHADOW_DHCP6_BIND").unwrap_or("[::]:547".into());
+    let socket = UdpSocket::bind(&bind_addr).expect("udp bind");
+    println!("Successfully bound to: {bind_addr}");
+    let mut read_buf = [0u8; 2048];
 
     // listen for messages
     loop {
@@ -111,6 +130,7 @@ fn main() {
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
                 println!("Received {amount} bytes from {src:?}");
+                println!("Data: {:x?}", &read_buf[..amount]);
                 (amount, src)
             }
             Err(err) => {
@@ -207,6 +227,8 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             // Servers MUST discard any Solicit messages that do not include a Client identifier
             // option or that do include a Server Identifier option
             let client_id = msg.client_id()?;
+            println!("ClientID: {:x?}", client_id);
+
             if msg.server_id().is_some() {
                 return None;
             }
@@ -214,12 +236,13 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             // Rapid Commit option - The client may request the expedited two-message exchange
             // by adding the Rapid Commit option to the first Solicit request
             let msg_type = if msg.rapid_commit() {
+                println!("Solicit 2 message exchange, rapid commit");
                 v6::MessageType::Reply
             } else {
+                println!("Solicit 4 message exchange");
                 v6::MessageType::Advertise
             };
 
-            println!("ClientID: {:?}", client_id);
             let reserved_address = storage.duid_reservation.get(client_id).cloned();
             match reserved_address {
                 Some(reservation) => {
@@ -292,7 +315,95 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
         }
         // Servers always discard Advertise
         v6::MessageType::Advertise => None,
-        // v6::MessageType::Request => todo!(),
+        // A client sends a Request as part of the 4 message exchange to receive an initial address/prefix
+        // https://datatracker.ietf.org/doc/html/rfc8415#section-16.4
+        v6::MessageType::Request => {
+            println!("Received Request message");
+
+            // Servers MUST discard any Request messages that:
+            // * does not include a Client Identifier
+            // * does not include a Server Identifier option
+            // * includes a Server Identifier option that does not match this server's DUID
+            let client_id = msg.client_id()?;
+            println!("ClientID: {:04x?}", client_id);
+            if msg.server_id()? != server_id() {
+                println!(
+                    "Advertise message includes Server ID that doesn't match this server: {:?}",
+                    msg.server_id()
+                );
+                return None;
+            }
+
+            let reserved_address = storage.duid_reservation.get(client_id).cloned();
+            match reserved_address {
+                Some(reservation) => {
+                    let lease = Lease {
+                        first_leased: Instant::now(),
+                        last_leased: Instant::now(),
+                        valid: Duration::from_secs(u64::from(VALID_LIFETIME)),
+                        source: LeaseSource::Duid,
+                        duid: client_id.to_vec(),
+                        mac: None,
+                    };
+
+                    storage.leased_new(&reservation, &lease);
+
+                    let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
+                    let mut opts = v6::DhcpOptions::new();
+
+                    // Reply contains IA_NA address and IA_PD prefix as options.
+                    // These options contain nested options with the actual addresses/prefixes
+                    // ReplyOptions [IAPD[IAPrefix], IANA[IAAddr]]
+
+                    // construct IA_PD information
+                    if msg.ia_pd().is_some() {
+                        let mut ia_pd_opts = DhcpOptions::new();
+                        ia_pd_opts.insert(DhcpOption::IAPrefix(v6::IAPrefix {
+                            preferred_lifetime: PREFERRED_LIFETIME,
+                            valid_lifetime: VALID_LIFETIME,
+                            prefix_len: reservation.pd.prefix_len(),
+                            prefix_ip: reservation.pd.addr(),
+                            opts: DhcpOptions::new(),
+                        }));
+                        // add IA_PD information to Reply message
+                        opts.insert(DhcpOption::IAPD(IAPD {
+                            id: 1,
+                            t1: PREFERRED_LIFETIME,
+                            t2: VALID_LIFETIME,
+                            opts: ia_pd_opts,
+                        }));
+                    }
+
+                    // construct IA_NA information
+                    if msg.ia_na().is_some() {
+                        let mut ia_na_opts = DhcpOptions::new();
+                        ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
+                            addr: reservation.na,
+                            preferred_life: PREFERRED_LIFETIME,
+                            valid_life: VALID_LIFETIME,
+                            opts: DhcpOptions::new(),
+                        }));
+                        // add IA_NA information to Reply message
+                        opts.insert(DhcpOption::IANA(v6::IANA {
+                            id: 1,
+                            t1: PREFERRED_LIFETIME,
+                            t2: VALID_LIFETIME,
+                            opts: ia_na_opts,
+                        }));
+                    }
+
+                    opts.insert(DhcpOption::ServerId(server_id().to_vec()));
+                    opts.insert(DhcpOption::ClientId(client_id.to_vec()));
+
+                    reply.set_opts(opts);
+                    Some(reply)
+                }
+                None => {
+                    eprintln!("Request with no reservation for DUID");
+                    None
+                }
+            }
+        }
         // v6::MessageType::Confirm => todo!(),
 
         // 18.2.4.  Creation and Transmission of Renew Messages
@@ -457,7 +568,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
         // v6::MessageType::Unknown(_) => todo!(),
         _ => {
             eprintln!(
-                "MessageType {:?} not implemented by ddhcpv6",
+                "MessageType `{:?}` not implemented by ddhcpv6",
                 msg.msg_type()
             );
             None
