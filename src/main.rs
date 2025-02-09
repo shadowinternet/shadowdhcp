@@ -54,13 +54,13 @@ struct Lease {
     valid: Duration,
     source: LeaseSource,
     duid: Vec<u8>,
-    mac: Option<String>,
+    mac: Option<MacAddr6>,
 }
 
 #[allow(unused)]
 struct Storage {
     duid_reservation: HashMap<Vec<u8>, ReservedAddress>,
-    mac_reservation: HashMap<String, ReservedAddress>,
+    mac_reservation: HashMap<MacAddr6, ReservedAddress>,
     current_leases: HashMap<ReservedAddress, Lease>,
 }
 
@@ -103,7 +103,7 @@ fn main() {
 
     let mut mac_reservation = HashMap::new();
     mac_reservation.insert(
-        String::from("74:83:C2:5D:7C:E5"),
+        MacAddr6::new([0x74, 0x83, 0xc2, 0x5d, 0x7c, 0xe5]),
         ReservedAddress {
             na: Ipv6Addr::from_str("2605:cb40:8020::2").unwrap(),
             pd: Ipv6Net::from_str("2605:cb40:8020:100::/56").unwrap(),
