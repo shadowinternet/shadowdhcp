@@ -16,5 +16,6 @@ name = "server"
 path = "src/main.rs"
 
 [dependencies]
+advmac = "1.0.3"
 dhcproto = { git = "https://github.com/nocduro/dhcproto.git" }
 ipnet = "2.5"

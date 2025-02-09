@@ -3,6 +3,26 @@
 version = 4
 
 [[package]]
+name = "advmac"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41c1bfd911d1173023132c681f7434ed956ec5459d7520b4f85331fc00d93bf0"
+dependencies = [
+ "arrayvec",
+ "rand",
+ "serde",
+]
+
+[[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -40,7 +60,7 @@ checksum = "0e60eed09d8c01d3cee5b7d30acb059b76614c918fa0f992e0dd6eeb10daad6f"
 [[package]]
 name = "dhcproto"
 version = "0.13.0-alpha"
-source = "git+https://github.com/nocduro/dhcproto.git#205e0a541afc0c461a95cc8f1e216a08e87ef7ec"
+source = "git+https://github.com/nocduro/dhcproto.git#f1204d3e35409c2c24519a28ef5b8f8d0d88e8e7"
 dependencies = [
  "dhcproto-macros",
  "hex",
@@ -54,7 +74,7 @@ dependencies = [
 [[package]]
 name = "dhcproto-macros"
 version = "0.1.0"
-source = "git+https://github.com/nocduro/dhcproto.git#205e0a541afc0c461a95cc8f1e216a08e87ef7ec"
+source = "git+https://github.com/nocduro/dhcproto.git#f1204d3e35409c2c24519a28ef5b8f8d0d88e8e7"
 dependencies = [
  "proc-macro2",
 ]
@@ -439,6 +459,7 @@ dependencies = [
 name = "shadow_dhcpv6"
 version = "0.1.0"
 dependencies = [
+ "advmac",
  "dhcproto",
  "ipnet",
 ]

@@ -1,3 +1,4 @@
+use advmac::MacAddr6;
 use dhcproto::{
     v6::{self, DhcpOption, DhcpOptions, IAAddr, IAPrefix, Message, RelayMessage, IANA, IAPD},
     Decodable, Encodable,
@@ -227,7 +228,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             // Servers MUST discard any Solicit messages that do not include a Client identifier
             // option or that do include a Server Identifier option
             let client_id = msg.client_id()?;
-            println!("ClientID: {:x?}", client_id);
+            println!("ClientID: {:x?}, hw_addr: {:?}", client_id, msg.hw_addr());
 
             if msg.server_id().is_some() {
                 return None;
@@ -236,6 +237,8 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             // Rapid Commit option - The client may request the expedited two-message exchange
             // by adding the Rapid Commit option to the first Solicit request
             let msg_type = if msg.rapid_commit() {
+                // TODO: the server needs to include the rapid commit option in replys to a rapid commit
+                // https://datatracker.ietf.org/doc/html/rfc8415#section-21.14
                 println!("Solicit 2 message exchange, rapid commit");
                 v6::MessageType::Reply
             } else {
@@ -325,7 +328,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             // * does not include a Server Identifier option
             // * includes a Server Identifier option that does not match this server's DUID
             let client_id = msg.client_id()?;
-            println!("ClientID: {:04x?}", client_id);
+            println!("ClientID: {:x?}, hw_addr: {:?}", client_id, msg.hw_addr());
             if msg.server_id()? != server_id() {
                 println!(
                     "Advertise message includes Server ID that doesn't match this server: {:?}",
@@ -431,7 +434,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             // message MUST include a ClientIdentifier option
             let client_id = msg.client_id()?;
 
-            println!("ClientID: {:?}", client_id);
+            println!("ClientID: {:x?}, hw_addr: {:?}", client_id, msg.hw_addr());
 
             let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
             let mut opts = v6::DhcpOptions::new();
@@ -582,6 +585,7 @@ trait ShadowMessageExt {
     fn rapid_commit(&self) -> bool;
     fn ia_na(&self) -> Option<&IANA>;
     fn ia_pd(&self) -> Option<&IAPD>;
+    fn hw_addr(&self) -> Option<MacAddr6>;
 }
 
 impl ShadowMessageExt for Message {
@@ -615,6 +619,20 @@ impl ShadowMessageExt for Message {
     fn ia_pd(&self) -> Option<&IAPD> {
         self.opts().iter().find_map(|opt| match opt {
             v6::DhcpOption::IAPD(iapd) => Some(iapd),
+            _ => None,
+        })
+    }
+
+    /// Try to extract a link layer address from the client message by using the
+    /// DHCPv6 Client Link-Layer Address option, RFC6939
+    /// https://datatracker.ietf.org/doc/html/rfc6939#section-4
+    /// TODO: add fallbacks for other methods to get the link layer address
+    /// TODO: return multiple possible link layer addresses
+    fn hw_addr(&self) -> Option<MacAddr6> {
+        self.opts().iter().find_map(|opt| match opt {
+            v6::DhcpOption::ClientLinklayerAddress(ll) if ll.address.len() == 6 => {
+                MacAddr6::try_from(ll.address.as_slice()).ok()
+            }
             _ => None,
         })
     }
