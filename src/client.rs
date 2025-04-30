@@ -6,9 +6,9 @@ fn main() {
     let msg = dhcpv6_test_request().to_vec().expect("encoding test msg");
 
     // send message to localhost udp
-    let socket = UdpSocket::bind("[::1]:34254").expect("couldn't bind to address");
+    let socket = UdpSocket::bind("[::1]:0").expect("couldn't bind to address");
     socket
-        .send_to(&msg, "[::1]:567")
+        .send_to(&msg, "[::1]:547")
         .expect("couldn't send data");
 
     let mut recv_buf = vec![0u8; 1500];
