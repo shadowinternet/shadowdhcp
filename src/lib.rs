@@ -31,7 +31,7 @@ impl Reservation {
     /// MAC Address, Option82
     pub fn v4_key(&self) -> Option<V4Key> {
         self.mac
-            .map(|m| V4Key::Mac(m))
+            .map(V4Key::Mac)
             .or(self
                 .option82_circuit
                 .as_ref()
@@ -49,7 +49,7 @@ impl Reservation {
         self.duid
             .as_ref()
             .map(|d| V6Key::Duid(d.clone()))
-            .or(self.mac.map(|m| V6Key::Mac(m)))
+            .or(self.mac.map(V6Key::Mac))
     }
 }
 
@@ -84,8 +84,15 @@ pub struct Lease<T> {
 }
 
 pub struct Storage {
-    pub v4_reservations: HashMap<V4Key, Ipv4Addr>,
-    pub v6_reservations: HashMap<V6Key, V6Ip>,
+    reservations: Vec<Reservation>,
+    /// Lookup reservation by MAC address
+    mac_reservation_index: HashMap<MacAddr6, usize>,
+    /// Lookup reservation by the DUID
+    duid_reservation_index: HashMap<Vec<u8>, usize>,
+    /// Lookup reservation by the Option 82 value
+    option82_reservation_index: HashMap<Vec<u8>, usize>,
+    /// When leasing IPv4 via Option 82, record the MAC address that was used and point to the Option 82 data
+    option82_mac_binding: HashMap<MacAddr6, Vec<u8>>,
     pub v4_leases: HashMap<Ipv4Addr, Lease<V4Key>>,
     pub v6_leases: HashMap<V6Ip, Lease<V6Key>>,
     pub v4_subnets: Vec<V4Subnet>,
@@ -93,40 +100,76 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// Return reservation for MAC address, or try to find reservation by dynamic option82 data
+    pub fn get_reservation_by_mac(&self, mac: &MacAddr6) -> Option<&Reservation> {
+        self.mac_reservation_index
+            .get(mac)
+            .and_then(|idx| self.reservations.get(*idx))
+            .or(self
+                .option82_mac_binding
+                .get(mac)
+                .and_then(|opt| self.get_reservation_by_option82(opt)))
+    }
+
+    pub fn get_reservation_by_duid(&self, duid: &[u8]) -> Option<&Reservation> {
+        self.duid_reservation_index
+            .get(duid)
+            .and_then(|idx| self.reservations.get(*idx))
+    }
+
+    pub fn get_reservation_by_option82(&self, opt: &[u8]) -> Option<&Reservation> {
+        self.option82_reservation_index
+            .get(opt)
+            .and_then(|idx| self.reservations.get(*idx))
+    }
+
+    pub fn insert_mac_option82_binding(&mut self, mac: &MacAddr6, opt: &[u8]) {
+        self.option82_mac_binding.insert(*mac, opt.to_vec());
+    }
+
+    fn rebuild_indices(&mut self) {
+        self.mac_reservation_index = self
+            .reservations
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, r)| r.mac.map(|mac| (mac, idx)))
+            .collect();
+
+        self.duid_reservation_index = self
+            .reservations
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, r)| r.duid.as_ref().map(|duid| (duid.clone(), idx)))
+            .collect();
+
+        // TODO: update option82 data type?
+        self.option82_reservation_index = self
+            .reservations
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, r)| r.option82_circuit.as_ref().map(|opt| (opt.clone(), idx)))
+            .collect();
+
+        // only retain current option82
+        self.option82_mac_binding
+            .retain(|_k, v| self.option82_reservation_index.contains_key(v));
+    }
+
     pub fn new(reservations: &[Reservation], subnets: &[V4Subnet], v4_dns: &[Ipv4Addr]) -> Self {
-        let mut v4 = HashMap::new();
-        let mut v6 = HashMap::new();
-
-        for r in reservations {
-            match r.v4_key() {
-                Some(key) => v4.insert(key, r.ipv4),
-                None => {
-                    eprintln!("No IPv4 key for reservation IPv4: {}", r.ipv4);
-                    continue;
-                }
-            };
-
-            // if we have a v4 key, we are guaranteed to have a v6 key either
-            // via MAC address, or dynamically added by option 82
-            if let Some(key) = r.v6_key() {
-                v6.insert(
-                    key,
-                    V6Ip {
-                        ia_na: r.ipv6_na,
-                        ia_pd: r.ipv6_pd,
-                    },
-                );
-            }
-        }
-
-        Self {
-            v4_reservations: v4,
-            v6_reservations: v6,
+        let mut output = Storage {
+            reservations: reservations.to_vec(),
+            mac_reservation_index: HashMap::new(),
+            duid_reservation_index: HashMap::new(),
+            option82_reservation_index: HashMap::new(),
+            option82_mac_binding: HashMap::new(),
             v4_leases: HashMap::new(),
             v6_leases: HashMap::new(),
-            v4_subnets: subnets.into(),
-            v4_dns: v4_dns.into(),
-        }
+            v4_subnets: subnets.to_vec(),
+            v4_dns: v4_dns.to_vec(),
+        };
+
+        output.rebuild_indices();
+        output
     }
 }
 
