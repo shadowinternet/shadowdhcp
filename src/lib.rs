@@ -128,6 +128,7 @@ impl Storage {
     }
 
     fn rebuild_indices(&mut self) {
+        // TODO: check for duplicate reservations
         self.mac_reservation_index = self
             .reservations
             .iter()
@@ -188,10 +189,13 @@ mod tests {
         let v4_dns = [Ipv4Addr::from([8, 8, 8, 8]), Ipv4Addr::from([8, 8, 4, 4])];
 
         let storage = Storage::new(&reservations, &subnets, &v4_dns);
-        println!(
-            "num ipv4: {}, num ipv6: {}",
-            storage.v4_reservations.len(),
-            storage.v6_reservations.len()
+        assert_eq!(
+            Ipv4Addr::from([192, 168, 1, 109]),
+            storage.get_reservation_by_mac(&MacAddr6::parse_str("00:11:22:33:44:55").unwrap()).unwrap().ipv4
+        );
+        assert_eq!(
+            Ipv4Addr::from([192, 168, 1, 110]),
+            storage.get_reservation_by_mac(&MacAddr6::parse_str("00:11:22:33:44:57").unwrap()).unwrap().ipv4
         );
     }
 }
