@@ -180,7 +180,22 @@ mod tests {
 
     #[test]
     fn load_reservations() {
-        let json_str = include_str!("../reservations.json");
+        let json_str = r#"
+        [
+            {
+                "ipv4": "192.168.1.109",
+                "ipv6_na": "2001:db8:1:2::1",
+                "ipv6_pd": "2001:db8:1:3::/56",
+                "mac": "00:11:22:33:44:55"
+            },
+            {
+                "ipv4": "192.168.1.110",
+                "ipv6_na": "2001:db8:1:4::1",
+                "ipv6_pd": "2001:db8:1:5::/56",
+                "mac": "00:11:22:33:44:57"
+            }
+        ]
+        "#;
         let reservations: Vec<Reservation> = serde_json::from_str(json_str).unwrap();
         let subnets = [V4Subnet {
             net: "192.168.0.0/24".parse().unwrap(),
@@ -191,11 +206,17 @@ mod tests {
         let storage = Storage::new(&reservations, &subnets, &v4_dns);
         assert_eq!(
             Ipv4Addr::from([192, 168, 1, 109]),
-            storage.get_reservation_by_mac(&MacAddr6::parse_str("00:11:22:33:44:55").unwrap()).unwrap().ipv4
+            storage
+                .get_reservation_by_mac(&MacAddr6::parse_str("00:11:22:33:44:55").unwrap())
+                .unwrap()
+                .ipv4
         );
         assert_eq!(
             Ipv4Addr::from([192, 168, 1, 110]),
-            storage.get_reservation_by_mac(&MacAddr6::parse_str("00:11:22:33:44:57").unwrap()).unwrap().ipv4
+            storage
+                .get_reservation_by_mac(&MacAddr6::parse_str("00:11:22:33:44:57").unwrap())
+                .unwrap()
+                .ipv4
         );
     }
 }
