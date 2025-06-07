@@ -65,6 +65,19 @@ fn handle_message_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v
         Some(r) => r,
         None => todo!("get info from relay fields and check for reservation"),
     };
+    let (gateway, subnet_mask) = match storage
+        .v4_subnets
+        .iter()
+        .find(|subnet| subnet.net.contains(reservation))
+        .map(|subnet| (subnet.gateway, subnet.net.netmask()))
+    {
+        Some((gw, subnet)) => (gw, subnet),
+        None => {
+            eprintln!("Couldn't find configured subnet for {}", reservation);
+            return None;
+        }
+    };
+
     let unspecified = Ipv4Addr::UNSPECIFIED;
     let mut reply = v4::Message::new_with_id(
         msg.xid(),
@@ -83,12 +96,9 @@ fn handle_message_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v
 
     opts.insert(DhcpOption::MessageType(v4::MessageType::Offer));
     opts.insert(DhcpOption::ServerIdentifier(server_id()));
-    opts.insert(DhcpOption::SubnetMask(Ipv4Addr::from([255, 255, 255, 0])));
-    opts.insert(DhcpOption::Router(vec![Ipv4Addr::from([192, 168, 1, 1])]));
-    opts.insert(DhcpOption::DomainNameServer(vec![
-        Ipv4Addr::from([8, 8, 8, 8]),
-        Ipv4Addr::from([8, 8, 4, 4]),
-    ]));
+    opts.insert(DhcpOption::SubnetMask(subnet_mask));
+    opts.insert(DhcpOption::Router(vec![gateway]));
+    opts.insert(DhcpOption::DomainNameServer(storage.v4_dns.clone()));
     opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
     opts.insert(DhcpOption::End);
 

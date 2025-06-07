@@ -5,7 +5,7 @@ use std::{
 };
 
 use advmac::MacAddr6;
-use ipnet::Ipv6Net;
+use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -70,6 +70,12 @@ pub struct V6Ip {
     pub ia_pd: Ipv6Net,
 }
 
+#[derive(Debug, Clone)]
+pub struct V4Subnet {
+    pub net: Ipv4Net,
+    pub gateway: Ipv4Addr,
+}
+
 pub struct Lease<T> {
     pub first_leased: Instant,
     pub last_leased: Instant,
@@ -82,10 +88,12 @@ pub struct Storage {
     pub v6_reservations: HashMap<V6Key, V6Ip>,
     pub v4_leases: HashMap<Ipv4Addr, Lease<V4Key>>,
     pub v6_leases: HashMap<V6Ip, Lease<V6Key>>,
+    pub v4_subnets: Vec<V4Subnet>,
+    pub v4_dns: Vec<Ipv4Addr>,
 }
 
 impl Storage {
-    pub fn new_with_reservations(reservations: &[Reservation]) -> Self {
+    pub fn new(reservations: &[Reservation], subnets: &[V4Subnet], v4_dns: &[Ipv4Addr]) -> Self {
         let mut v4 = HashMap::new();
         let mut v6 = HashMap::new();
 
@@ -116,6 +124,8 @@ impl Storage {
             v6_reservations: v6,
             v4_leases: HashMap::new(),
             v6_leases: HashMap::new(),
+            v4_subnets: subnets.into(),
+            v4_dns: v4_dns.into(),
         }
     }
 }
@@ -128,8 +138,13 @@ mod tests {
     fn load_reservations() {
         let json_str = include_str!("../reservations.json");
         let reservations: Vec<Reservation> = serde_json::from_str(json_str).unwrap();
+        let subnets = [V4Subnet {
+            net: "192.168.0.0/24".parse().unwrap(),
+            gateway: "192.168.0.1".parse().unwrap(),
+        }];
+        let v4_dns = [Ipv4Addr::from([8, 8, 8, 8]), Ipv4Addr::from([8, 8, 4, 4])];
 
-        let storage = Storage::new_with_reservations(&reservations);
+        let storage = Storage::new(&reservations, &subnets, &v4_dns);
         println!(
             "num ipv4: {}, num ipv6: {}",
             storage.v4_reservations.len(),
