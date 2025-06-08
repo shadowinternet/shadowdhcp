@@ -5,11 +5,12 @@ use dhcproto::{
     Decodable, Encodable,
 };
 use std::{
+    collections::BTreeMap,
     io,
     net::{Ipv4Addr, UdpSocket},
 };
 
-use shadow_dhcpv6::{Storage, V4Key};
+use shadow_dhcpv6::{Option82, Storage, V4Key};
 
 const ADDRESS_LEASE_TIME: u32 = 3600;
 
@@ -17,6 +18,12 @@ fn server_id() -> Ipv4Addr {
     Ipv4Addr::from([23, 159, 144, 10])
 }
 
+/// 4.3 A DHCP server can receive the following messages from a client:
+/// * DHCPDISCOVER
+/// * DHCPREQUEST
+/// * DHCPDECLINE
+/// * DHCPRELEASE
+/// * DHCPINFORM
 fn handle_message(storage: &mut Storage, msg: v4::Message) -> Option<v4::Message> {
     // servers should only respond to BootRequest messages
     let message_type = match msg.opcode() {
@@ -28,31 +35,35 @@ fn handle_message(storage: &mut Storage, msg: v4::Message) -> Option<v4::Message
     };
 
     match message_type {
-        v4::MessageType::Discover => handle_message_discover(storage, &msg),
-        v4::MessageType::Offer => todo!(),
-        v4::MessageType::Request => handle_message_request(storage, &msg),
+        v4::MessageType::Discover => handle_discover(storage, &msg),
+        v4::MessageType::Offer => None,
+        v4::MessageType::Request => handle_request(storage, &msg),
         v4::MessageType::Decline => todo!(),
-        v4::MessageType::Ack => todo!(),
-        v4::MessageType::Nak => todo!(),
+        v4::MessageType::Ack => None,
+        v4::MessageType::Nak => None,
         v4::MessageType::Release => todo!(),
         v4::MessageType::Inform => todo!(),
-        v4::MessageType::ForceRenew => todo!(),
-        v4::MessageType::LeaseQuery => todo!(),
-        v4::MessageType::LeaseUnassigned => todo!(),
-        v4::MessageType::LeaseUnknown => todo!(),
-        v4::MessageType::LeaseActive => todo!(),
-        v4::MessageType::BulkLeaseQuery => todo!(),
-        v4::MessageType::LeaseQueryDone => todo!(),
-        v4::MessageType::ActiveLeaseQuery => todo!(),
-        v4::MessageType::LeaseQueryStatus => todo!(),
-        v4::MessageType::Tls => todo!(),
-        v4::MessageType::Unknown(_) => todo!(),
+        v4::MessageType::ForceRenew => None,
+        v4::MessageType::LeaseQuery => None,
+        v4::MessageType::LeaseUnassigned => None,
+        v4::MessageType::LeaseUnknown => None,
+        v4::MessageType::LeaseActive => None,
+        v4::MessageType::BulkLeaseQuery => None,
+        v4::MessageType::LeaseQueryDone => None,
+        v4::MessageType::ActiveLeaseQuery => None,
+        v4::MessageType::LeaseQueryStatus => None,
+        v4::MessageType::Tls => None,
+        v4::MessageType::Unknown(_) => None,
     }
 }
 
 /// Client is discovering available DHCP servers, reply with DHCPOFFER message with
-/// available parameters. TODO: Section 4.1, 4.3.1
-fn handle_message_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Message> {
+/// available parameters.
+///
+/// TODO: client renew
+///
+/// https://datatracker.ietf.org/doc/html/rfc2131#section-4.3.1
+fn handle_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Message> {
     // get client hwaddr, or option82 key
     let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
     let relay = msg.relay_agent_information();
@@ -60,7 +71,7 @@ fn handle_message_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v
     // MAC reservations are higher priority than Option82:
     let reservation = match storage
         .get_reservation_by_mac(&mac_addr)
-        .or(storage.get_reservation_by_option82(&[0, 0]))
+        .or(relay.and_then(|relay_info| storage.get_reservation_by_relay_information(relay_info)))
     {
         Some(r) => r,
         None => {
@@ -112,7 +123,7 @@ fn handle_message_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v
 /// DHCPREQUEST - Client message to servers either (a) requesting offered parameters from one server
 /// and implicitly declining offers from all others, (b) confirming correctness of previously allocated
 /// address after, e.g., system reboot, or (c) extending the lease on a particular network address
-fn handle_message_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Message> {
+fn handle_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Message> {
     // client MUST include the 'server identifier' for this server
     if msg.server_id()? != &server_id() {
         println!(
@@ -129,7 +140,7 @@ fn handle_message_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4
     // MAC reservations are higher priority than Option82:
     let reservation = match storage
         .get_reservation_by_mac(&mac_addr)
-        .or(storage.get_reservation_by_option82(&[0, 0]))
+        .or(relay.and_then(|relay_info| storage.get_reservation_by_relay_information(relay_info)))
     {
         Some(r) => r,
         None => {
