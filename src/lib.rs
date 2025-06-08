@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr},
     time::{Duration, Instant},
 };
@@ -82,8 +82,6 @@ pub struct Option82 {
     remote: Option<String>,
     subscriber: Option<String>,
 }
-
-pub type Option82BTree = BTreeMap<u8, Vec<u8>>;
 
 pub struct Storage {
     reservations: Vec<Reservation>,
