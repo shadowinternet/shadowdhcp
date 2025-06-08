@@ -22,16 +22,17 @@ pub struct Reservation {
     // customer router duid. Overrides option82 settings, and mac setting for ipv6
     pub duid: Option<Vec<u8>>,
     // option82 info used if mac is not specified
-    pub option82: Option<Vec<Option82>>,
+    pub option82: Option<Option82>,
 }
 
 impl Reservation {
     /// Get the V4 key used for the reservation with the following order precedence
     /// MAC Address, Option82
     pub fn v4_key(&self) -> Option<V4Key> {
-        self.mac
-            .map(V4Key::Mac)
-            .or(self.option82_to_btree().map(V4Key::Option82))
+        self.mac.map(V4Key::Mac).or(self
+            .option82
+            .as_ref()
+            .map(|opt| V4Key::Option82(opt.clone())))
     }
 
     /// Get the V6 key used for the reservation with the following order precedence
@@ -43,21 +44,12 @@ impl Reservation {
             .map(|d| V6Key::Duid(d.clone()))
             .or(self.mac.map(V6Key::Mac))
     }
-
-    fn option82_to_btree(&self) -> Option<Option82BTree> {
-        self.option82.as_ref().map(|opt_vec| {
-            opt_vec
-                .iter()
-                .map(|suboption| (suboption.code, Vec::from(suboption.value.as_str())))
-                .collect()
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum V4Key {
     Mac(MacAddr6),
-    Option82(Option82BTree),
+    Option82(Option82),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -84,10 +76,11 @@ pub struct Lease<T> {
     pub source: T,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
 pub struct Option82 {
-    code: u8,
-    value: String,
+    circuit: Option<String>,
+    remote: Option<String>,
+    subscriber: Option<String>,
 }
 
 pub type Option82BTree = BTreeMap<u8, Vec<u8>>;
@@ -99,9 +92,9 @@ pub struct Storage {
     /// Lookup reservation by the DUID
     duid_reservation_index: HashMap<Vec<u8>, usize>,
     /// Lookup reservation by the Option 82 value
-    option82_reservation_index: HashMap<Option82BTree, usize>,
+    option82_reservation_index: HashMap<Option82, usize>,
     /// When leasing IPv4 via Option 82, record the MAC address that was used and point to the Option 82 data
-    option82_mac_binding: HashMap<MacAddr6, Option82BTree>,
+    option82_mac_binding: HashMap<MacAddr6, Option82>,
     pub v4_leases: HashMap<Ipv4Addr, Lease<V4Key>>,
     pub v6_leases: HashMap<V6Ip, Lease<V6Key>>,
     pub v4_subnets: Vec<V4Subnet>,
@@ -126,67 +119,50 @@ impl Storage {
             .and_then(|idx| self.reservations.get(*idx))
     }
 
-    pub fn get_reservation_by_option82(&self, opt: &Option82BTree) -> Option<&Reservation> {
+    pub fn get_reservation_by_option82(&self, opt: &Option82) -> Option<&Reservation> {
         self.option82_reservation_index
             .get(opt)
             .and_then(|idx| self.reservations.get(*idx))
     }
 
+    /// Check for a reservation in the following order of subcodes:
+    /// * Remote-ID
+    /// * Subscriber-ID
+    /// * Circuit-ID + Remote-ID
+    /// * Circuit-ID
     pub fn get_reservation_by_relay_information(
         &self,
         relay: &RelayAgentInformation,
     ) -> Option<&Reservation> {
-        // Check for reservations in the following combinations:
-        // * Circuit-ID
-        // * Circuit-ID + Remote-ID
-        // * Remote-ID
-        // * Subscriber-ID
-        let circuit = relay.circuit_id();
-        let remote = relay.remote_id();
-        let subscriber = relay.subscriber_id();
+        let circuit = relay.circuit_id().and_then(|v| String::from_utf8(v).ok());
+        let remote = relay.remote_id().and_then(|v| String::from_utf8(v).ok());
+        let subscriber = relay
+            .subscriber_id()
+            .and_then(|v| String::from_utf8(v).ok());
 
-        let mut map = Option82BTree::new();
-
-        if let Some(c) = circuit {
-            if !c.is_empty() {
-                map.insert(1, c);
-                match self.get_reservation_by_option82(&map) {
-                    Some(r) => return Some(r),
-                    _ => (),
-                }
-            }
-        }
-
-        if let Some(r) = remote {
-            if !r.is_empty() {
-                map.insert(2, r);
-                // Check Circuit-ID + Remote-ID
-                match self.get_reservation_by_option82(&map) {
-                    Some(r) => return Some(r),
-                    None => {
-                        // Check Remote-ID
-                        if map.remove(&1).is_some() {
-                            match self.get_reservation_by_option82(&map) {
-                                Some(r) => return Some(r),
-                                _ => (),
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check Subscriber-ID
-        if let Some(s) = subscriber {
-            map.clear();
-            map.insert(6, s);
-            return self.get_reservation_by_option82(&map);
-        }
-
-        None
+        self.get_reservation_by_option82(&Option82 {
+            circuit: None,
+            remote: remote.clone(),
+            subscriber: None,
+        })
+        .or(self.get_reservation_by_option82(&Option82 {
+            circuit: None,
+            remote: None,
+            subscriber,
+        }))
+        .or(self.get_reservation_by_option82(&Option82 {
+            circuit: circuit.clone(),
+            remote,
+            subscriber: None,
+        }))
+        .or(self.get_reservation_by_option82(&Option82 {
+            circuit,
+            remote: None,
+            subscriber: None,
+        }))
     }
 
-    pub fn insert_mac_option82_binding(&mut self, mac: &MacAddr6, opt: &Option82BTree) {
+    pub fn insert_mac_option82_binding(&mut self, mac: &MacAddr6, opt: &Option82) {
         self.option82_mac_binding.insert(*mac, opt.clone());
     }
 
@@ -211,7 +187,7 @@ impl Storage {
             .reservations
             .iter()
             .enumerate()
-            .filter_map(|(idx, r)| r.option82_to_btree().map(|opt| (opt, idx)))
+            .filter_map(|(idx, r)| r.option82.as_ref().map(|opt| (opt.clone(), idx)))
             .collect();
 
         // only retain current option82
@@ -247,7 +223,9 @@ impl RelayAgentInformationExt for RelayAgentInformation {
     fn circuit_id(&self) -> Option<Vec<u8>> {
         self.get(dhcproto::v4::relay::RelayCode::AgentCircuitId)
             .and_then(|ri| match ri {
-                dhcproto::v4::relay::RelayInfo::AgentCircuitId(v) => Some(v.clone()),
+                dhcproto::v4::relay::RelayInfo::AgentCircuitId(v) if !v.is_empty() => {
+                    Some(v.clone())
+                }
                 _ => None,
             })
     }
@@ -255,7 +233,9 @@ impl RelayAgentInformationExt for RelayAgentInformation {
     fn remote_id(&self) -> Option<Vec<u8>> {
         self.get(dhcproto::v4::relay::RelayCode::AgentRemoteId)
             .and_then(|ri| match ri {
-                dhcproto::v4::relay::RelayInfo::AgentRemoteId(v) => Some(v.clone()),
+                dhcproto::v4::relay::RelayInfo::AgentRemoteId(v) if !v.is_empty() => {
+                    Some(v.clone())
+                }
                 _ => None,
             })
     }
@@ -263,7 +243,7 @@ impl RelayAgentInformationExt for RelayAgentInformation {
     fn subscriber_id(&self) -> Option<Vec<u8>> {
         self.get(dhcproto::v4::relay::RelayCode::SubscriberId)
             .and_then(|ri| match ri {
-                dhcproto::v4::relay::RelayInfo::SubscriberId(v) => Some(v.clone()),
+                dhcproto::v4::relay::RelayInfo::SubscriberId(v) if !v.is_empty() => Some(v.clone()),
                 _ => None,
             })
     }
@@ -293,13 +273,13 @@ mod tests {
                 "ipv4": "192.168.1.111",
                 "ipv6_na": "2605:cb40:1:6::1",
                 "ipv6_pd": "2605:cb40:1:7::/56",
-                "option82": [{"code": 1, "value": "eth2:100"}, {"code": 2, "value": "11:00:11:22:33:44"}]
+                "option82": {"circuit": "99:11:22:33:44:55", "remote": "eth2:100"}
             },
             {
                 "ipv4": "192.168.1.112",
                 "ipv6_na": "2605:cb40:1:8::1",
                 "ipv6_pd": "2605:cb40:1:9::/56",
-                "option82": [{"code": 6, "value": "subscriber:1020"}]
+                "option82": {"subscriber": "subscriber:1020"}
             }
         ]
         "#;
