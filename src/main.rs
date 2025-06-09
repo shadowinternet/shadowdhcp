@@ -627,7 +627,7 @@ impl ShadowMessageExt for Message {
 
     /// Try to extract a link layer address from the client message by using the
     /// DHCPv6 Client Link-Layer Address option, RFC6939
-    /// https://datatracker.ietf.org/doc/html/rfc6939#section-4
+    /// <https://datatracker.ietf.org/doc/html/rfc6939#section-4>
     /// TODO: add fallbacks for other methods to get the link layer address
     /// TODO: return multiple possible link layer addresses
     fn hw_addr(&self) -> Option<MacAddr6> {

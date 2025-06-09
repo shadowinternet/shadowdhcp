@@ -62,7 +62,7 @@ fn handle_message(storage: &mut Storage, msg: v4::Message) -> Option<v4::Message
 ///
 /// TODO: client renew
 ///
-/// https://datatracker.ietf.org/doc/html/rfc2131#section-4.3.1
+/// <https://datatracker.ietf.org/doc/html/rfc2131#section-4.3.1>
 fn handle_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Message> {
     // get client hwaddr, or option82 key
     let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
