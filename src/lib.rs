@@ -9,6 +9,10 @@ use dhcproto::v4::relay::RelayAgentInformation;
 use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{Deserialize, Serialize};
 
+use crate::extractors::Option82ExtractorFn;
+
+pub mod extractors;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Reservation {
     // customer WAN v4 address
@@ -78,9 +82,9 @@ pub struct Lease<T> {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
 pub struct Option82 {
-    circuit: Option<String>,
-    remote: Option<String>,
-    subscriber: Option<String>,
+    pub circuit: Option<String>,
+    pub remote: Option<String>,
+    pub subscriber: Option<String>,
 }
 
 pub struct Storage {
@@ -93,6 +97,7 @@ pub struct Storage {
     option82_reservation_index: HashMap<Option82, usize>,
     /// When leasing IPv4 via Option 82, record the MAC address that was used and point to the Option 82 data
     option82_mac_binding: HashMap<MacAddr6, Option82>,
+    option82_extractors: Vec<Option82ExtractorFn>,
     pub v4_leases: HashMap<Ipv4Addr, Lease<V4Key>>,
     pub v6_leases: HashMap<V6Ip, Lease<V6Key>>,
     pub v4_subnets: Vec<V4Subnet>,
@@ -158,6 +163,19 @@ impl Storage {
             remote: None,
             subscriber: None,
         }))
+        .or_else(|| {
+            let option = Option82 {
+                circuit: relay.circuit_id().and_then(|v| String::from_utf8(v).ok()),
+                remote: relay.remote_id().and_then(|v| String::from_utf8(v).ok()),
+                subscriber: relay
+                    .subscriber_id()
+                    .and_then(|v| String::from_utf8(v).ok()),
+            };
+            self.option82_extractors.iter().find_map(|extractor| {
+                extractor(&option)
+                    .and_then(|extracted_opt| self.get_reservation_by_option82(&extracted_opt))
+            })
+        })
     }
 
     pub fn insert_mac_option82_binding(&mut self, mac: &MacAddr6, opt: &Option82) {
@@ -200,6 +218,7 @@ impl Storage {
             duid_reservation_index: HashMap::new(),
             option82_reservation_index: HashMap::new(),
             option82_mac_binding: HashMap::new(),
+            option82_extractors: extractors::get_all_extractors().into_values().collect(),
             v4_leases: HashMap::new(),
             v6_leases: HashMap::new(),
             v4_subnets: subnets.to_vec(),
@@ -259,19 +278,19 @@ mod tests {
                 "ipv4": "192.168.1.109",
                 "ipv6_na": "2605:cb40:1:2::1",
                 "ipv6_pd": "2605:cb40:1:3::/56",
-                "mac": "00:11:22:33:44:55"
+                "mac": "00-11-22-33-44-55"
             },
             {
                 "ipv4": "192.168.1.110",
                 "ipv6_na": "2605:cb40:1:4::1",
                 "ipv6_pd": "2605:cb40:1:5::/56",
-                "mac": "00:11:22:33:44:57"
+                "mac": "00-11-22-33-44-57"
             },
             {
                 "ipv4": "192.168.1.111",
                 "ipv6_na": "2605:cb40:1:6::1",
                 "ipv6_pd": "2605:cb40:1:7::/56",
-                "option82": {"circuit": "99:11:22:33:44:55", "remote": "eth2:100"}
+                "option82": {"circuit": "99-11-22-33-44-55", "remote": "eth2:100"}
             },
             {
                 "ipv4": "192.168.1.112",
