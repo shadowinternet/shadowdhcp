@@ -5,6 +5,7 @@ use std::{
 };
 
 use advmac::MacAddr6;
+use compact_str::CompactString;
 use dhcproto::v4::relay::RelayAgentInformation;
 use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{Deserialize, Serialize};
@@ -82,9 +83,9 @@ pub struct Lease<T> {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
 pub struct Option82 {
-    pub circuit: Option<String>,
-    pub remote: Option<String>,
-    pub subscriber: Option<String>,
+    pub circuit: Option<CompactString>,
+    pub remote: Option<CompactString>,
+    pub subscriber: Option<CompactString>,
 }
 
 pub struct Storage {
@@ -128,53 +129,29 @@ impl Storage {
             .and_then(|idx| self.reservations.get(*idx))
     }
 
-    /// Check for a reservation in the following order of subcodes:
-    /// * Remote-ID
-    /// * Subscriber-ID
-    /// * Circuit-ID + Remote-ID
-    /// * Circuit-ID
     pub fn get_reservation_by_relay_information(
         &self,
         relay: &RelayAgentInformation,
     ) -> Option<&Reservation> {
-        let circuit = relay.circuit_id().and_then(|v| String::from_utf8(v).ok());
-        let remote = relay.remote_id().and_then(|v| String::from_utf8(v).ok());
+        let circuit = relay
+            .circuit_id()
+            .and_then(|v| CompactString::from_utf8(v).ok());
+        let remote = relay
+            .remote_id()
+            .and_then(|v| CompactString::from_utf8(v).ok());
         let subscriber = relay
             .subscriber_id()
-            .and_then(|v| String::from_utf8(v).ok());
+            .and_then(|v| CompactString::from_utf8(v).ok());
 
-        self.get_reservation_by_option82(&Option82 {
-            circuit: None,
-            remote: remote.clone(),
-            subscriber: None,
-        })
-        .or(self.get_reservation_by_option82(&Option82 {
-            circuit: None,
-            remote: None,
-            subscriber,
-        }))
-        .or(self.get_reservation_by_option82(&Option82 {
-            circuit: circuit.clone(),
-            remote,
-            subscriber: None,
-        }))
-        .or(self.get_reservation_by_option82(&Option82 {
+        let option = Option82 {
             circuit,
-            remote: None,
-            subscriber: None,
-        }))
-        .or_else(|| {
-            let option = Option82 {
-                circuit: relay.circuit_id().and_then(|v| String::from_utf8(v).ok()),
-                remote: relay.remote_id().and_then(|v| String::from_utf8(v).ok()),
-                subscriber: relay
-                    .subscriber_id()
-                    .and_then(|v| String::from_utf8(v).ok()),
-            };
-            self.option82_extractors.iter().find_map(|extractor| {
-                extractor(&option)
-                    .and_then(|extracted_opt| self.get_reservation_by_option82(&extracted_opt))
-            })
+            remote,
+            subscriber,
+        };
+
+        self.option82_extractors.iter().find_map(|extractor| {
+            extractor(&option)
+                .and_then(|extracted_opt| self.get_reservation_by_option82(&extracted_opt))
         })
     }
 
@@ -198,7 +175,6 @@ impl Storage {
             .filter_map(|(idx, r)| r.duid.as_ref().map(|duid| (duid.clone(), idx)))
             .collect();
 
-        // TODO: update option82 data type?
         self.option82_reservation_index = self
             .reservations
             .iter()
@@ -212,6 +188,7 @@ impl Storage {
     }
 
     pub fn new(reservations: &[Reservation], subnets: &[V4Subnet], v4_dns: &[Ipv4Addr]) -> Self {
+        // TODO: order extractors by priority
         let mut output = Storage {
             reservations: reservations.to_vec(),
             mac_reservation_index: HashMap::new(),
