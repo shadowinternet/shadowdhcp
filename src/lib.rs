@@ -1,3 +1,4 @@
+use core::fmt;
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr},
@@ -8,13 +9,13 @@ use advmac::MacAddr6;
 use compact_str::CompactString;
 use dhcproto::v4::relay::RelayAgentInformation;
 use ipnet::{Ipv4Net, Ipv6Net};
-use serde::{Deserialize, Serialize};
+use serde::{de::Visitor, Deserialize, Serialize};
 
 use crate::extractors::Option82ExtractorFn;
 
 pub mod extractors;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 pub struct Reservation {
     // customer WAN v4 address
     pub ipv4: Ipv4Addr,
@@ -25,7 +26,7 @@ pub struct Reservation {
     // customer router WAN mac address. Overrides option82 settings
     pub mac: Option<MacAddr6>,
     // customer router duid. Overrides option82 settings, and mac setting for ipv6
-    pub duid: Option<Vec<u8>>,
+    pub duid: Option<Duid>,
     // option82 info used if mac is not specified
     pub option82: Option<Option82>,
 }
@@ -59,10 +60,11 @@ pub enum V4Key {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum V6Key {
-    Duid(Vec<u8>),
+    Duid(Duid),
     Mac(MacAddr6),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct V6Ip {
     pub ia_na: Ipv6Addr,
     pub ia_pd: Ipv6Net,
@@ -74,11 +76,22 @@ pub struct V4Subnet {
     pub gateway: Ipv4Addr,
 }
 
-pub struct Lease<T> {
+#[derive(Debug, Clone)]
+pub struct LeaseV4 {
     pub first_leased: Instant,
     pub last_leased: Instant,
     pub valid: Duration,
-    pub source: T,
+    pub mac: MacAddr6,
+    pub option82: Option<Option82>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LeaseV6 {
+    pub first_leased: Instant,
+    pub last_leased: Instant,
+    pub valid: Duration,
+    pub duid: Duid,
+    pub mac: Option<MacAddr6>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
@@ -88,19 +101,112 @@ pub struct Option82 {
     pub subscriber: Option<CompactString>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Duid {
+    pub bytes: Vec<u8>,
+}
+
+impl<'de> serde::Deserialize<'de> for Duid {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct DuidVisitor;
+        impl<'de> Visitor<'de> for DuidVisitor {
+            type Value = Duid;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str(r#"colon or dash separated hex "00:11:22" or "00-11-22""#)
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Duid::try_from(v).map_err(serde::de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_str(DuidVisitor)
+    }
+}
+
+impl From<Vec<u8>> for Duid {
+    fn from(value: Vec<u8>) -> Self {
+        Duid { bytes: value }
+    }
+}
+
+impl From<Duid> for dhcproto::v6::duid::Duid {
+    fn from(value: Duid) -> Self {
+        Self::from(value.bytes)
+    }
+}
+
+// TODO: modify dhcproto to have `impl From<Duid> for Vec<u8>`
+// TODO: modify dhcproto to parse strings into Duid
+impl From<dhcproto::v6::duid::Duid> for Duid {
+    fn from(value: dhcproto::v6::duid::Duid) -> Self {
+        Self::from(value.as_ref())
+    }
+}
+
+impl From<&[u8]> for Duid {
+    fn from(value: &[u8]) -> Self {
+        Duid {
+            bytes: value.to_vec(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DuidParseError {}
+impl std::error::Error for DuidParseError {}
+impl std::fmt::Display for DuidParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Invalid DUID format")
+    }
+}
+
+// TODO: support UUID
+// TODO: support raw bytes, or other data
+impl TryFrom<&str> for Duid {
+    type Error = DuidParseError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value.trim().as_bytes().get(2) {
+            Some(&b':') => value
+                .trim()
+                .split(':')
+                .map(|hex| u8::from_str_radix(hex, 16))
+                .collect::<Result<Vec<u8>, _>>()
+                .map_err(|_| DuidParseError {})
+                .map(|v| Duid::from(v)),
+            Some(&b'-') => value
+                .trim()
+                .split('-')
+                .map(|hex| u8::from_str_radix(hex, 16))
+                .collect::<Result<Vec<u8>, _>>()
+                .map_err(|_| DuidParseError {})
+                .map(|v| Duid::from(v)),
+            _ => Err(DuidParseError {}),
+        }
+    }
+}
+
 pub struct Storage {
     reservations: Vec<Reservation>,
     /// Lookup reservation by MAC address
     mac_reservation_index: HashMap<MacAddr6, usize>,
     /// Lookup reservation by the DUID
-    duid_reservation_index: HashMap<Vec<u8>, usize>,
+    duid_reservation_index: HashMap<Duid, usize>,
     /// Lookup reservation by the Option 82 value
     option82_reservation_index: HashMap<Option82, usize>,
     /// When leasing IPv4 via Option 82, record the MAC address that was used and point to the Option 82 data
     option82_mac_binding: HashMap<MacAddr6, Option82>,
     option82_extractors: Vec<Option82ExtractorFn>,
-    pub v4_leases: HashMap<Ipv4Addr, Lease<V4Key>>,
-    pub v6_leases: HashMap<V6Ip, Lease<V6Key>>,
+    pub v4_leases: HashMap<Reservation, LeaseV4>,
+    pub v6_leases: HashMap<Reservation, LeaseV6>,
     pub v4_subnets: Vec<V4Subnet>,
     pub v4_dns: Vec<Ipv4Addr>,
 }
@@ -117,7 +223,7 @@ impl Storage {
                 .and_then(|opt| self.get_reservation_by_option82(opt)))
     }
 
-    pub fn get_reservation_by_duid(&self, duid: &[u8]) -> Option<&Reservation> {
+    pub fn get_reservation_by_duid(&self, duid: &Duid) -> Option<&Reservation> {
         self.duid_reservation_index
             .get(duid)
             .and_then(|idx| self.reservations.get(*idx))
@@ -205,6 +311,25 @@ impl Storage {
         output.rebuild_indices();
         output
     }
+
+    pub fn leased_new_v4(&mut self, reservation: &Reservation, lease: LeaseV4) {
+        self.v4_leases.insert(reservation.to_owned(), lease);
+    }
+
+    pub fn leased_new_v6(&mut self, reservation: &Reservation, lease: LeaseV6) {
+        match self.v6_leases.insert(reservation.to_owned(), lease.clone()) {
+            Some(old_lease) => {
+                println!(
+                    "replaced existing lease {:?}, {:?} {old_lease:?} with new lease {lease:?}",
+                    reservation.ipv6_na, reservation.ipv6_pd
+                )
+            }
+            None => println!(
+                "First time leased address: {:?}, {:?} to DUID {:x?} MAC {:?}",
+                reservation.ipv6_na, reservation.ipv6_pd, lease.duid, lease.mac
+            ),
+        }
+    }
 }
 
 trait RelayAgentInformationExt {
@@ -246,6 +371,30 @@ impl RelayAgentInformationExt for RelayAgentInformation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_duid() {
+        let duid_str_colon = "29:30:31:32:33:34:35:36:37:38:39:40:41:42:43:44";
+        let duid_str_dash = "29-30-31-32-33-34-35-36-37-38-39-40-41-42-43-44";
+        let duid = Duid::from(vec![
+            0x29, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x40, 0x41, 0x42,
+            0x43, 0x44,
+        ]);
+
+        let duid_parsed_colon = Duid::try_from(duid_str_colon).unwrap();
+        assert_eq!(duid_parsed_colon, duid);
+        let duid_parsed_dash = Duid::try_from(duid_str_dash).unwrap();
+        assert_eq!(duid_parsed_dash, duid);
+
+        #[derive(Deserialize)]
+        struct DuidJson {
+            duid: Duid,
+        }
+        let json = r#"{"duid": "29:30:31:32:33:34:35:36:37:38:39:40:41:42:43:44"}"#;
+        let parsed_json: DuidJson = serde_json::from_str(json).unwrap();
+
+        assert_eq!(parsed_json.duid, duid);
+    }
 
     #[test]
     fn load_reservations() {
