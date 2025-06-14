@@ -21,7 +21,7 @@ fn main() {
 
 fn dhcpv6_test_request() -> v6::RelayMessage {
     let duid = vec![
-        29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+        0x29, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x40, 0x41, 0x42, 0x43, 0x44,
     ];
     // construct a new Solicit Message with a random xid
     let mut msg = v6::Message::new(v6::MessageType::Solicit);
