@@ -44,9 +44,9 @@ fn handle_message(
     };
 
     match message_type {
-        v4::MessageType::Discover => handle_discover(&reservations, &config, &msg),
+        v4::MessageType::Discover => handle_discover(reservations, config, &msg),
         v4::MessageType::Offer => None,
-        v4::MessageType::Request => handle_request(&reservations, &leases, &config, &msg),
+        v4::MessageType::Request => handle_request(reservations, leases, config, &msg),
         v4::MessageType::Decline => todo!(),
         v4::MessageType::Ack => None,
         v4::MessageType::Nak => None,
@@ -260,13 +260,13 @@ fn get_reservation_by_relay_information(
 
 pub fn v4_worker(
     reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
-    leases: LeaseDb,
+    leases: Arc<LeaseDb>,
     config: Arc<ArcSwapAny<Arc<Config>>>,
 ) {
     let mut read_buf = [0u8; 2048];
     let bind_addr = std::env::var("SHADOW_DHCP4_BIND").unwrap_or("0.0.0.0:67".into());
     let socket = UdpSocket::bind(&bind_addr).expect("udp bind");
-    println!("Successfully bound to {bind_addr:?}");
+    println!("Successfully bound to: {bind_addr}");
 
     loop {
         let (amount, src) = match socket.recv_from(&mut read_buf) {

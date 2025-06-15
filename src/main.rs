@@ -27,9 +27,9 @@ fn main() {
         serde_json::from_reader(std::fs::File::open("reservations.json").unwrap()).unwrap();
 
     let db = ReservationDb::new();
-    db.load_reservations(reservations.clone());
+    db.load_reservations(reservations);
     let db = Arc::new(ArcSwap::from_pointee(db));
-    let leases = LeaseDb::new();
+    let leases = Arc::new(LeaseDb::new());
 
     {
         let mydb = db.load();
