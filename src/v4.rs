@@ -1,16 +1,20 @@
-#![allow(unused)]
 use advmac::MacAddr6;
+use arc_swap::ArcSwapAny;
+use compact_str::CompactString;
 use dhcproto::{
-    v4::{self, relay, DhcpOption},
+    v4::{self, relay::RelayAgentInformation, DhcpOption},
     Decodable, Encodable,
 };
 use std::{
-    collections::BTreeMap,
     io,
     net::{Ipv4Addr, UdpSocket},
+    sync::Arc,
 };
 
-use shadow_dhcpv6::{Option82, Storage, V4Key};
+use shadow_dhcpv6::{
+    leasedb::LeaseDb, reservationdb::ReservationDb, Config, Option82, RelayAgentInformationExt,
+    Reservation, V4Key,
+};
 
 const ADDRESS_LEASE_TIME: u32 = 3600;
 
@@ -24,7 +28,12 @@ fn server_id() -> Ipv4Addr {
 /// * DHCPDECLINE
 /// * DHCPRELEASE
 /// * DHCPINFORM
-fn handle_message(storage: &mut Storage, msg: v4::Message) -> Option<v4::Message> {
+fn handle_message(
+    reservations: &ReservationDb,
+    leases: &LeaseDb,
+    config: &Config,
+    msg: v4::Message,
+) -> Option<v4::Message> {
     // servers should only respond to BootRequest messages
     let message_type = match msg.opcode() {
         v4::Opcode::BootRequest => msg.message_type()?,
@@ -35,9 +44,9 @@ fn handle_message(storage: &mut Storage, msg: v4::Message) -> Option<v4::Message
     };
 
     match message_type {
-        v4::MessageType::Discover => handle_discover(storage, &msg),
+        v4::MessageType::Discover => handle_discover(&reservations, &config, &msg),
         v4::MessageType::Offer => None,
-        v4::MessageType::Request => handle_request(storage, &msg),
+        v4::MessageType::Request => handle_request(&reservations, &leases, &config, &msg),
         v4::MessageType::Decline => todo!(),
         v4::MessageType::Ack => None,
         v4::MessageType::Nak => None,
@@ -63,16 +72,21 @@ fn handle_message(storage: &mut Storage, msg: v4::Message) -> Option<v4::Message
 /// TODO: client renew
 ///
 /// <https://datatracker.ietf.org/doc/html/rfc2131#section-4.3.1>
-fn handle_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Message> {
+fn handle_discover(
+    reservations: &ReservationDb,
+    config: &Config,
+    msg: &v4::Message,
+) -> Option<v4::Message> {
     // get client hwaddr, or option82 key
     let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
     let relay = msg.relay_agent_information();
 
     // MAC reservations are higher priority than Option82:
-    let reservation = match storage
-        .get_reservation_by_mac(&mac_addr)
-        .or(relay.and_then(|relay_info| storage.get_reservation_by_relay_information(relay_info)))
-    {
+    let reservation = match reservations
+        .by_mac(&mac_addr)
+        .or(relay.and_then(|relay_info| {
+            get_reservation_by_relay_information(reservations, config, relay_info)
+        })) {
         Some(r) => r,
         None => {
             println!("No reservation for ___ ");
@@ -80,8 +94,8 @@ fn handle_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Messa
         }
     };
 
-    let (gateway, subnet_mask) = match storage
-        .v4_subnets
+    let (gateway, subnet_mask) = match config
+        .subnets_v4
         .iter()
         .find(|subnet| subnet.net.contains(&reservation.ipv4))
         .map(|subnet| (subnet.gateway, subnet.net.netmask()))
@@ -107,13 +121,13 @@ fn handle_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Messa
     reply.set_flags(msg.flags());
     reply.set_sname("dhcp.shadowinter.net".as_bytes());
 
-    let mut opts = reply.opts_mut();
+    let opts = reply.opts_mut();
 
     opts.insert(DhcpOption::MessageType(v4::MessageType::Offer));
     opts.insert(DhcpOption::ServerIdentifier(server_id()));
     opts.insert(DhcpOption::SubnetMask(subnet_mask));
     opts.insert(DhcpOption::Router(vec![gateway]));
-    opts.insert(DhcpOption::DomainNameServer(storage.v4_dns.clone()));
+    opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
     opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
     opts.insert(DhcpOption::End);
 
@@ -123,7 +137,12 @@ fn handle_discover(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Messa
 /// DHCPREQUEST - Client message to servers either (a) requesting offered parameters from one server
 /// and implicitly declining offers from all others, (b) confirming correctness of previously allocated
 /// address after, e.g., system reboot, or (c) extending the lease on a particular network address
-fn handle_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Message> {
+fn handle_request(
+    reservations: &ReservationDb,
+    leases: &LeaseDb,
+    config: &Config,
+    msg: &v4::Message,
+) -> Option<v4::Message> {
     // client MUST include the 'server identifier' for this server
     if msg.server_id()? != &server_id() {
         println!(
@@ -138,10 +157,11 @@ fn handle_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Messag
     let relay = msg.relay_agent_information();
 
     // MAC reservations are higher priority than Option82:
-    let reservation = match storage
-        .get_reservation_by_mac(&mac_addr)
-        .or(relay.and_then(|relay_info| storage.get_reservation_by_relay_information(relay_info)))
-    {
+    let reservation = match reservations
+        .by_mac(&mac_addr)
+        .or(relay.and_then(|relay_info| {
+            get_reservation_by_relay_information(reservations, config, relay_info)
+        })) {
         Some(r) => r,
         None => {
             println!("No reservation for ___ ");
@@ -149,8 +169,8 @@ fn handle_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Messag
         }
     };
 
-    let (gateway, subnet_mask) = match storage
-        .v4_subnets
+    let (gateway, subnet_mask) = match config
+        .subnets_v4
         .iter()
         .find(|subnet| subnet.net.contains(&reservation.ipv4))
         .map(|subnet| (subnet.gateway, subnet.net.netmask()))
@@ -176,7 +196,7 @@ fn handle_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Messag
     reply.set_flags(msg.flags());
     reply.set_sname("dhcp.shadowinter.net".as_bytes());
 
-    let mut opts = reply.opts_mut();
+    let opts = reply.opts_mut();
 
     // the 'requested IP address' option MUST be set to the value of 'yiaddr' in the DHCPOFFER message
     // from the server
@@ -190,13 +210,13 @@ fn handle_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Messag
         opts.insert(DhcpOption::ServerIdentifier(server_id()));
         opts.insert(DhcpOption::SubnetMask(subnet_mask));
         opts.insert(DhcpOption::Router(vec![gateway]));
-        opts.insert(DhcpOption::DomainNameServer(storage.v4_dns.clone()));
+        opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
         opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
         opts.insert(DhcpOption::End);
 
         // if option82, update the option82 to MAC address mapping:
         if let Some(V4Key::Option82(opt)) = reservation.v4_key() {
-            storage.insert_mac_option82_binding(&mac_addr, &opt);
+            leases.insert_mac_option82_binding(&mac_addr, &opt);
         }
     } else {
         println!(
@@ -212,8 +232,41 @@ fn handle_request(storage: &mut Storage, msg: &v4::Message) -> Option<v4::Messag
     Some(reply)
 }
 
-fn v4_worker(socket: UdpSocket, mut storage: Storage) {
+fn get_reservation_by_relay_information(
+    reservations: &ReservationDb,
+    config: &Config,
+    relay: &RelayAgentInformation,
+) -> Option<Arc<Reservation>> {
+    let circuit = relay
+        .circuit_id()
+        .and_then(|v| CompactString::from_utf8(v).ok());
+    let remote = relay
+        .remote_id()
+        .and_then(|v| CompactString::from_utf8(v).ok());
+    let subscriber = relay
+        .subscriber_id()
+        .and_then(|v| CompactString::from_utf8(v).ok());
+
+    let option = Option82 {
+        circuit,
+        remote,
+        subscriber,
+    };
+
+    config.option82_extractors.iter().find_map(|extractor| {
+        extractor(&option).and_then(|extracted_opt| reservations.by_opt82(&extracted_opt))
+    })
+}
+
+pub fn v4_worker(
+    reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
+    leases: LeaseDb,
+    config: Arc<ArcSwapAny<Arc<Config>>>,
+) {
     let mut read_buf = [0u8; 2048];
+    let bind_addr = std::env::var("SHADOW_DHCP4_BIND").unwrap_or("0.0.0.0:67".into());
+    let socket = UdpSocket::bind(&bind_addr).expect("udp bind");
+    println!("Successfully bound to {bind_addr:?}");
 
     loop {
         let (amount, src) = match socket.recv_from(&mut read_buf) {
@@ -236,7 +289,9 @@ fn v4_worker(socket: UdpSocket, mut storage: Storage) {
 
         match v4::Message::from_bytes(&read_buf[..amount]) {
             Ok(msg) => {
-                if let Some(response_msg) = handle_message(&mut storage, msg) {
+                if let Some(response_msg) =
+                    handle_message(&reservations.load(), &leases, &config.load(), msg)
+                {
                     let write_buf = response_msg.to_vec().expect("encoding response message");
                     match socket.send_to(&write_buf, src) {
                         Ok(sent) => println!("responded with {sent} bytes"),

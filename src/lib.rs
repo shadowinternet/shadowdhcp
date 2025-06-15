@@ -1,6 +1,5 @@
 use core::fmt;
 use std::{
-    collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr},
     time::{Duration, Instant},
 };
@@ -14,6 +13,8 @@ use serde::{de::Visitor, Deserialize, Serialize};
 use crate::extractors::Option82ExtractorFn;
 
 pub mod extractors;
+pub mod leasedb;
+pub mod reservationdb;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
 pub struct Reservation {
@@ -74,6 +75,12 @@ pub struct V6Ip {
 pub struct V4Subnet {
     pub net: Ipv4Net,
     pub gateway: Ipv4Addr,
+}
+
+pub struct Config {
+    pub dns_v4: Vec<Ipv4Addr>,
+    pub subnets_v4: Vec<V4Subnet>,
+    pub option82_extractors: Vec<Option82ExtractorFn>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,158 +188,20 @@ impl TryFrom<&str> for Duid {
                 .map(|hex| u8::from_str_radix(hex, 16))
                 .collect::<Result<Vec<u8>, _>>()
                 .map_err(|_| DuidParseError {})
-                .map(|v| Duid::from(v)),
+                .map(Duid::from),
             Some(&b'-') => value
                 .trim()
                 .split('-')
                 .map(|hex| u8::from_str_radix(hex, 16))
                 .collect::<Result<Vec<u8>, _>>()
                 .map_err(|_| DuidParseError {})
-                .map(|v| Duid::from(v)),
+                .map(Duid::from),
             _ => Err(DuidParseError {}),
         }
     }
 }
 
-pub struct Storage {
-    reservations: Vec<Reservation>,
-    /// Lookup reservation by MAC address
-    mac_reservation_index: HashMap<MacAddr6, usize>,
-    /// Lookup reservation by the DUID
-    duid_reservation_index: HashMap<Duid, usize>,
-    /// Lookup reservation by the Option 82 value
-    option82_reservation_index: HashMap<Option82, usize>,
-    /// When leasing IPv4 via Option 82, record the MAC address that was used and point to the Option 82 data
-    option82_mac_binding: HashMap<MacAddr6, Option82>,
-    option82_extractors: Vec<Option82ExtractorFn>,
-    pub v4_leases: HashMap<Reservation, LeaseV4>,
-    pub v6_leases: HashMap<Reservation, LeaseV6>,
-    pub v4_subnets: Vec<V4Subnet>,
-    pub v4_dns: Vec<Ipv4Addr>,
-}
-
-impl Storage {
-    /// Return reservation for MAC address, or try to find reservation by dynamic option82 data
-    pub fn get_reservation_by_mac(&self, mac: &MacAddr6) -> Option<&Reservation> {
-        self.mac_reservation_index
-            .get(mac)
-            .and_then(|idx| self.reservations.get(*idx))
-            .or(self
-                .option82_mac_binding
-                .get(mac)
-                .and_then(|opt| self.get_reservation_by_option82(opt)))
-    }
-
-    pub fn get_reservation_by_duid(&self, duid: &Duid) -> Option<&Reservation> {
-        self.duid_reservation_index
-            .get(duid)
-            .and_then(|idx| self.reservations.get(*idx))
-    }
-
-    pub fn get_reservation_by_option82(&self, opt: &Option82) -> Option<&Reservation> {
-        self.option82_reservation_index
-            .get(opt)
-            .and_then(|idx| self.reservations.get(*idx))
-    }
-
-    pub fn get_reservation_by_relay_information(
-        &self,
-        relay: &RelayAgentInformation,
-    ) -> Option<&Reservation> {
-        let circuit = relay
-            .circuit_id()
-            .and_then(|v| CompactString::from_utf8(v).ok());
-        let remote = relay
-            .remote_id()
-            .and_then(|v| CompactString::from_utf8(v).ok());
-        let subscriber = relay
-            .subscriber_id()
-            .and_then(|v| CompactString::from_utf8(v).ok());
-
-        let option = Option82 {
-            circuit,
-            remote,
-            subscriber,
-        };
-
-        self.option82_extractors.iter().find_map(|extractor| {
-            extractor(&option)
-                .and_then(|extracted_opt| self.get_reservation_by_option82(&extracted_opt))
-        })
-    }
-
-    pub fn insert_mac_option82_binding(&mut self, mac: &MacAddr6, opt: &Option82) {
-        self.option82_mac_binding.insert(*mac, opt.clone());
-    }
-
-    fn rebuild_indices(&mut self) {
-        // TODO: check for duplicate reservations
-        self.mac_reservation_index = self
-            .reservations
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, r)| r.mac.map(|mac| (mac, idx)))
-            .collect();
-
-        self.duid_reservation_index = self
-            .reservations
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, r)| r.duid.as_ref().map(|duid| (duid.clone(), idx)))
-            .collect();
-
-        self.option82_reservation_index = self
-            .reservations
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, r)| r.option82.as_ref().map(|opt| (opt.clone(), idx)))
-            .collect();
-
-        // only retain current option82
-        self.option82_mac_binding
-            .retain(|_k, v| self.option82_reservation_index.contains_key(v));
-    }
-
-    pub fn new(reservations: &[Reservation], subnets: &[V4Subnet], v4_dns: &[Ipv4Addr]) -> Self {
-        // TODO: order extractors by priority
-        let mut output = Storage {
-            reservations: reservations.to_vec(),
-            mac_reservation_index: HashMap::new(),
-            duid_reservation_index: HashMap::new(),
-            option82_reservation_index: HashMap::new(),
-            option82_mac_binding: HashMap::new(),
-            option82_extractors: extractors::get_all_extractors().into_values().collect(),
-            v4_leases: HashMap::new(),
-            v6_leases: HashMap::new(),
-            v4_subnets: subnets.to_vec(),
-            v4_dns: v4_dns.to_vec(),
-        };
-
-        output.rebuild_indices();
-        output
-    }
-
-    pub fn leased_new_v4(&mut self, reservation: &Reservation, lease: LeaseV4) {
-        self.v4_leases.insert(reservation.to_owned(), lease);
-    }
-
-    pub fn leased_new_v6(&mut self, reservation: &Reservation, lease: LeaseV6) {
-        match self.v6_leases.insert(reservation.to_owned(), lease.clone()) {
-            Some(old_lease) => {
-                println!(
-                    "replaced existing lease {:?}, {:?} {old_lease:?} with new lease {lease:?}",
-                    reservation.ipv6_na, reservation.ipv6_pd
-                )
-            }
-            None => println!(
-                "First time leased address: {:?}, {:?} to DUID {:x?} MAC {:?}",
-                reservation.ipv6_na, reservation.ipv6_pd, lease.duid, lease.mac
-            ),
-        }
-    }
-}
-
-trait RelayAgentInformationExt {
+pub trait RelayAgentInformationExt {
     fn circuit_id(&self) -> Option<Vec<u8>>;
     fn remote_id(&self) -> Option<Vec<u8>>;
     fn subscriber_id(&self) -> Option<Vec<u8>>;

@@ -1,12 +1,14 @@
 use advmac::MacAddr6;
+use arc_swap::ArcSwapAny;
 use dhcproto::{
     v6::{self, DhcpOption, DhcpOptions, IAAddr, IAPrefix, Message, RelayMessage, IANA, IAPD},
     Decodable, Encodable,
 };
-use shadow_dhcpv6::{LeaseV6, Storage};
+use shadow_dhcpv6::{leasedb::LeaseDb, reservationdb::ReservationDb, Config, LeaseV6};
 use std::{
     io,
     net::UdpSocket,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -31,9 +33,16 @@ const PREFERRED_LIFETIME: u32 = 120;
 const VALID_LIFETIME: u32 = 240;
 const SERVER_ID: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
-pub fn v6_worker(storage: &mut Storage) {
-    let msg = dhcpv6_test_request();
-    handle_message(storage, msg);
+pub fn v6_worker(
+    reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
+    leases: LeaseDb,
+    _config: Arc<ArcSwapAny<Arc<Config>>>,
+) {
+    {
+        let db = reservations.load();
+        let msg = dhcpv6_test_request();
+        handle_message(&db, &leases, msg);
+    }
 
     // only work with relayed messages
     let bind_addr = std::env::var("SHADOW_DHCP6_BIND").unwrap_or("[::]:547".into());
@@ -94,7 +103,8 @@ pub fn v6_worker(storage: &mut Storage) {
                     None => continue,
                 };
 
-                if let Some(response_msg) = handle_message(storage, inner_msg) {
+                if let Some(response_msg) = handle_message(&reservations.load(), &leases, inner_msg)
+                {
                     // wrap the message in a RelayRepl
                     let mut relay_reply_opts = DhcpOptions::new();
                     relay_reply_opts.insert(DhcpOption::RelayMsg(v6::RelayMessageData::Message(
@@ -132,7 +142,11 @@ pub fn v6_worker(storage: &mut Storage) {
     }
 }
 
-fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message> {
+fn handle_message(
+    reservations: &ReservationDb,
+    leases: &LeaseDb,
+    msg: v6::Message,
+) -> Option<v6::Message> {
     match msg.msg_type() {
         // A client sends a Solicit message to locate servers.
         // https://datatracker.ietf.org/doc/html/rfc8415#section-16.2
@@ -166,7 +180,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                 v6::MessageType::Advertise
             };
 
-            let reserved_address = storage.get_reservation_by_duid(&client_id).cloned();
+            let reserved_address = reservations.by_duid(&client_id);
             match reserved_address {
                 Some(reservation) => {
                     let lease = LeaseV6 {
@@ -177,7 +191,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                         mac: None,
                     };
 
-                    storage.leased_new_v6(&reservation, lease);
+                    leases.leased_new_v6(&reservation, lease);
 
                     let mut reply = v6::Message::new_with_id(msg_type, msg.xid());
                     let mut opts = v6::DhcpOptions::new();
@@ -256,7 +270,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                 return None;
             }
 
-            let reserved_address = storage.get_reservation_by_duid(&client_id).cloned();
+            let reserved_address = reservations.by_duid(&client_id);
             match reserved_address {
                 Some(reservation) => {
                     let lease = LeaseV6 {
@@ -267,7 +281,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                         mac: None,
                     };
 
-                    storage.leased_new_v6(&reservation, lease);
+                    leases.leased_new_v6(&reservation, lease);
 
                     let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
                     let mut opts = v6::DhcpOptions::new();
@@ -357,7 +371,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
             let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
             let mut opts = v6::DhcpOptions::new();
 
-            let reserved_address = storage.get_reservation_by_duid(&client_id).cloned();
+            let reserved_address = reservations.by_duid(&client_id);
             match reserved_address {
                 Some(reservation) => {
                     // check if our server reservation matches what the client sent
@@ -421,7 +435,7 @@ fn handle_message(storage: &mut Storage, msg: v6::Message) -> Option<v6::Message
                             duid: client_id.clone(),
                             mac: None,
                         };
-                        storage.leased_new_v6(&reservation, lease);
+                        leases.leased_new_v6(&reservation, lease);
                     }
                 }
                 None => {
