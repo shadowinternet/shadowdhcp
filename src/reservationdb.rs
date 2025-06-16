@@ -217,9 +217,7 @@ mod tests {
         ]
         "#;
         let reservations: Vec<Reservation> = serde_json::from_str(json_str).unwrap();
-        for reservation in reservations.into_iter() {
-            db.insert(reservation);
-        }
+        db.load_reservations(reservations);
 
         assert_eq!(
             db.by_mac(&MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]))
