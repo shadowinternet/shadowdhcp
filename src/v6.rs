@@ -4,6 +4,7 @@ use dhcproto::{
     v6::{self, DhcpOption, DhcpOptions, IAAddr, IAPrefix, Message, RelayMessage, IANA, IAPD},
     Decodable, Encodable,
 };
+use ipnet::Ipv6Net;
 use shadow_dhcpv6::{leasedb::LeaseDb, reservationdb::ReservationDb, Config, LeaseV6};
 use std::{
     io,
@@ -187,7 +188,7 @@ fn handle_solicit(
             leases.leased_new_v6(&reservation, lease);
 
             let mut reply = v6::Message::new_with_id(msg_type, msg.xid());
-            let mut opts = v6::DhcpOptions::new();
+            let opts = reply.opts_mut();
 
             // Reply contains IA_NA address and IA_PD prefix as options.
             // These options contain nested options with the actual addresses/prefixes
@@ -232,8 +233,6 @@ fn handle_solicit(
 
             opts.insert(DhcpOption::ServerId(server_id().to_vec()));
             opts.insert(DhcpOption::ClientId(client_id.bytes));
-
-            reply.set_opts(opts);
             Some(reply)
         }
         None => {
@@ -268,7 +267,7 @@ fn handle_renew(
     );
 
     let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
-    let mut opts = v6::DhcpOptions::new();
+    let opts = reply.opts_mut();
 
     let reserved_address = reservations.by_duid(&client_id).or(relay_msg
         .hw_addr()
@@ -382,8 +381,6 @@ fn handle_renew(
 
     opts.insert(DhcpOption::ServerId(server_id().to_vec()));
     opts.insert(DhcpOption::ClientId(client_id.bytes));
-
-    reply.set_opts(opts);
     Some(reply)
 }
 
@@ -430,7 +427,7 @@ fn handle_request(
             leases.leased_new_v6(&reservation, lease);
 
             let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
-            let mut opts = v6::DhcpOptions::new();
+            let opts = reply.opts_mut();
 
             // Reply contains IA_NA address and IA_PD prefix as options.
             // These options contain nested options with the actual addresses/prefixes
@@ -475,8 +472,6 @@ fn handle_request(
 
             opts.insert(DhcpOption::ServerId(server_id().to_vec()));
             opts.insert(DhcpOption::ClientId(client_id.bytes));
-
-            reply.set_opts(opts);
             Some(reply)
         }
         None => {
@@ -551,6 +546,10 @@ trait ShadowMessageExtV6 {
     fn rapid_commit(&self) -> bool;
     fn ia_na(&self) -> Option<&IANA>;
     fn ia_pd(&self) -> Option<&IAPD>;
+    #[allow(unused)]
+    fn ia_na_address(&self) -> Option<Ipv6Addr>;
+    #[allow(unused)]
+    fn ia_pd_prefix(&self) -> Option<Ipv6Net>;
 }
 
 trait HardwareAddressFromMessage {
@@ -585,10 +584,28 @@ impl ShadowMessageExtV6 for Message {
         })
     }
 
+    fn ia_na_address(&self) -> Option<Ipv6Addr> {
+        self.ia_na().and_then(|na| {
+            na.opts.iter().find_map(|opt| match opt {
+                v6::DhcpOption::IAAddr(ia) => Some(ia.addr),
+                _ => None,
+            })
+        })
+    }
+
     fn ia_pd(&self) -> Option<&IAPD> {
         self.opts().iter().find_map(|opt| match opt {
             v6::DhcpOption::IAPD(iapd) => Some(iapd),
             _ => None,
+        })
+    }
+
+    fn ia_pd_prefix(&self) -> Option<Ipv6Net> {
+        self.ia_pd().and_then(|pd| {
+            pd.opts.iter().find_map(|opt| match opt {
+                v6::DhcpOption::IAPrefix(ia) => Ipv6Net::new(ia.prefix_ip, ia.prefix_len).ok(),
+                _ => None,
+            })
         })
     }
 }
@@ -614,20 +631,6 @@ impl HardwareAddressFromMessage for RelayMessage {
 
 fn server_id() -> [u8; 16] {
     SERVER_ID
-}
-
-#[allow(unused)]
-fn dhcpv6_test_request() -> v6::Message {
-    let duid = vec![
-        0x29, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x40, 0x41, 0x42, 0x43,
-        0x44,
-    ];
-    // construct a new Message with a random xid
-    let mut msg = v6::Message::new(v6::MessageType::Solicit);
-    // set an option
-    msg.opts_mut().insert(v6::DhcpOption::ClientId(duid));
-
-    msg
 }
 
 #[cfg(test)]
@@ -830,12 +833,6 @@ mod tests {
 
     #[test]
     fn dynamic_opt82_binding() {
-        // fn handle_solicit(
-        //     reservations: &ReservationDb,
-        //     leases: &LeaseDb,
-        //     msg: v6::Message,
-        // )
-
         let json_str = r#"
         [
             {
@@ -868,7 +865,20 @@ mod tests {
 
         let duid = vec![0x00, 0x01];
         let mut msg = Message::new(v6::MessageType::Solicit);
-        msg.opts_mut().insert(v6::DhcpOption::ClientId(duid));
+        let msg_opts = msg.opts_mut();
+        msg_opts.insert(v6::DhcpOption::ClientId(duid));
+        msg_opts.insert(v6::DhcpOption::IANA(IANA {
+            id: 1,
+            t1: 100,
+            t2: 1000,
+            opts: DhcpOptions::new(),
+        }));
+        msg_opts.insert(v6::DhcpOption::IAPD(IAPD {
+            id: 1,
+            t1: 100,
+            t2: 1000,
+            opts: DhcpOptions::new(),
+        }));
 
         // pack msg into a relay_msg
         let mut relay_opts = v6::DhcpOptions::new();
@@ -892,5 +902,9 @@ mod tests {
 
         let resp = handle_solicit(&db, &leases, msg, &relay_msg).unwrap();
         assert!(matches!(resp.msg_type(), v6::MessageType::Advertise));
+
+        let reservation = db.by_opt82(&opt82).unwrap();
+        assert_eq!(resp.ia_na_address().unwrap(), reservation.ipv6_na);
+        assert_eq!(resp.ia_pd_prefix().unwrap(), reservation.ipv6_pd);
     }
 }
