@@ -58,7 +58,7 @@ pub fn subscriber_only(opt: &Option82) -> Option<Option82> {
 
 /// Read the first 12 characters of Remote-ID and parse as a MacAddr6.
 /// Then format the MacAddr6 with dash format for lookup in reservations.
-pub fn extract_ubiquiti_ufiber(opt: &Option82) -> Option<Option82> {
+pub fn remote_first_12(opt: &Option82) -> Option<Option82> {
     let mac = opt.remote.as_ref().and_then(|remote| {
         remote
             .get(0..12)
@@ -67,7 +67,7 @@ pub fn extract_ubiquiti_ufiber(opt: &Option82) -> Option<Option82> {
 
     match mac {
         Some(mac) => {
-            println!("Extracted MAC with ubiquiti ufiber extractor: {}", mac);
+            println!("Extracted MAC with remote_first_12 extractor: {}", mac);
             Some(Option82 {
                 circuit: None,
                 remote: Some(mac.to_compact_string()),
@@ -75,7 +75,6 @@ pub fn extract_ubiquiti_ufiber(opt: &Option82) -> Option<Option82> {
             })
         }
         None => {
-            println!("ubiquiti ufiber extractor didn't find MAC");
             None
         }
     }
@@ -115,8 +114,8 @@ pub fn get_all_extractors() -> HashMap<&'static str, Option82ExtractorFn> {
     );
     extractors.insert("circuit_only", circuit_only as Option82ExtractorFn);
     extractors.insert(
-        "ubiquiti_ufiber",
-        extract_ubiquiti_ufiber as Option82ExtractorFn,
+        "remote_first_12",
+        remote_first_12 as Option82ExtractorFn,
     );
     extractors.insert(
         "normalize_remote_mac",
@@ -235,17 +234,18 @@ mod tests {
 
     #[test]
     fn test_extract_ubiquiti_ufiber() {
+        // TODO: create extractor for capitalization?
         let wire_opt = Option82 {
-            circuit: Some("11-11-22-33-44-55".to_compact_string()),
-            remote: Some("001122334455/eth0/gi1/eth0:100".to_compact_string()),
+            circuit: Some("b4fbe4501fda/1/ac8ba9e217f8".to_compact_string()),
+            remote: Some("ac8ba9e217f8".to_compact_string()),
             subscriber: None,
         };
-        let extracted = extract_ubiquiti_ufiber(&wire_opt);
+        let extracted = remote_first_12(&wire_opt);
         assert_eq!(
             extracted,
             Some(Option82 {
                 circuit: None,
-                remote: Some("00-11-22-33-44-55".to_compact_string()),
+                remote: Some("AC-8B-A9-E2-17-F8".to_compact_string()),
                 subscriber: None
             })
         );

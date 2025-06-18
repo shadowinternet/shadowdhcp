@@ -77,6 +77,7 @@ fn handle_discover(
     config: &Config,
     msg: &v4::Message,
 ) -> Option<v4::Message> {
+    println!("DHCPDiscover");
     // get client hwaddr, or option82 key
     let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
     let relay = msg.relay_agent_information();
@@ -87,9 +88,13 @@ fn handle_discover(
         .or(relay.and_then(|relay_info| {
             get_reservation_by_relay_information(reservations, config, relay_info)
         })) {
-        Some(r) => r,
+        Some(r) => {
+            println!("Found reservation for IP: {}", r.ipv4);
+            r
+        }
         None => {
             println!("No reservation for ___ ");
+            // Ignore messages that don't have a reservation
             return None;
         }
     };
@@ -143,6 +148,7 @@ fn handle_request(
     config: &Config,
     msg: &v4::Message,
 ) -> Option<v4::Message> {
+    println!("DHCPRequest");
     // client MUST include the 'server identifier' for this server
     if msg.server_id()? != &server_id() {
         println!(
@@ -252,6 +258,8 @@ fn get_reservation_by_relay_information(
         remote,
         subscriber,
     };
+
+    println!("{option:?}");
 
     config.option82_extractors.iter().find_map(|extractor| {
         extractor(&option).and_then(|extracted_opt| reservations.by_opt82(&extracted_opt))

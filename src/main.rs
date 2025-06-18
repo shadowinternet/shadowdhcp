@@ -10,10 +10,16 @@ mod v4;
 mod v6;
 
 fn main() {
-    let subnets_v4 = vec![V4Subnet {
-        net: "192.168.0.0/24".parse().unwrap(),
-        gateway: "192.168.0.1".parse().unwrap(),
-    }];
+    let subnets_v4 = vec![
+        V4Subnet {
+            net: "192.168.0.0/24".parse().unwrap(),
+            gateway: "192.168.0.1".parse().unwrap(),
+        },
+        V4Subnet {
+            net: "100.110.1.0/24".parse().unwrap(),
+            gateway: "100.110.1.1".parse().unwrap(),
+        },
+    ];
     let dns_v4 = vec![Ipv4Addr::from([8, 8, 8, 8]), Ipv4Addr::from([8, 8, 4, 4])];
 
     let config = Config {

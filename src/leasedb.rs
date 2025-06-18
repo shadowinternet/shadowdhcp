@@ -39,6 +39,7 @@ impl LeaseDb {
     }
 
     pub fn insert_mac_option82_binding(&self, mac_addr: &MacAddr6, opt: &Option82) {
+        println!("Adding mac -> Option82 binding: {mac_addr} {opt:?}");
         self.mac_to_opt82.insert(*mac_addr, opt.clone());
     }
 
