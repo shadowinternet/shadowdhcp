@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tracing::{debug, error, field, info, instrument, Span};
+use tracing::{debug, error, field, info, instrument, trace, Span};
 
 // handle retransmissions
 // renew of existing lease
@@ -52,7 +52,7 @@ pub fn v6_worker(
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
                 debug!("Received {amount} bytes from {src:?}");
-                debug!("Data: {:x?}", &read_buf[..amount]);
+                trace!("Data: {:x?}", &read_buf[..amount]);
                 (amount, src)
             }
             Err(err) => {

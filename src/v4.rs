@@ -10,7 +10,7 @@ use std::{
     net::{Ipv4Addr, UdpSocket},
     sync::Arc,
 };
-use tracing::{debug, error, field, info, instrument, warn, Span};
+use tracing::{debug, error, field, info, instrument, trace, warn, Span};
 
 use shadow_dhcpv6::{
     leasedb::LeaseDb, reservationdb::ReservationDb, Config, Option82, RelayAgentInformationExt,
@@ -287,7 +287,7 @@ pub fn v4_worker(
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
                 debug!("Received {amount} bytes from {src:?}");
-                debug!("Data: {:x?}", &read_buf[..amount]);
+                trace!("Data: {:x?}", &read_buf[..amount]);
                 (amount, src)
             }
             Err(err) => {
