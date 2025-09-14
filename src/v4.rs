@@ -10,6 +10,7 @@ use std::{
     net::{Ipv4Addr, UdpSocket},
     sync::Arc,
 };
+use tracing::{debug, error, field, info, instrument, warn, Span};
 
 use shadow_dhcpv6::{
     leasedb::LeaseDb, reservationdb::ReservationDb, Config, Option82, RelayAgentInformationExt,
@@ -72,15 +73,18 @@ fn handle_message(
 /// TODO: client renew
 ///
 /// <https://datatracker.ietf.org/doc/html/rfc2131#section-4.3.1>
+#[instrument(skip(reservations, config, msg),
+fields(mac = field::Empty, xid = %msg.xid()))]
 fn handle_discover(
     reservations: &ReservationDb,
     config: &Config,
     msg: &v4::Message,
 ) -> Option<v4::Message> {
-    println!("DHCPDiscover");
     // get client hwaddr, or option82 key
     let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
+    Span::current().record("mac", field::display(mac_addr));
     let relay = msg.relay_agent_information();
+    info!("DHCPDiscover");
 
     // MAC reservations are higher priority than Option82:
     let reservation = match reservations
@@ -89,12 +93,11 @@ fn handle_discover(
             get_reservation_by_relay_information(reservations, config, relay_info)
         })) {
         Some(r) => {
-            println!("Found reservation for IP: {}", r.ipv4);
+            info!(ipv4 = %r.ipv4, "Found reservation for IP");
             r
         }
         None => {
-            println!("No reservation for ___ ");
-            // Ignore messages that don't have a reservation
+            info!("No reservation found");
             return None;
         }
     };
@@ -107,7 +110,7 @@ fn handle_discover(
     {
         Some((gw, subnet)) => (gw, subnet),
         None => {
-            eprintln!("Couldn't find configured subnet for {}", &reservation.ipv4);
+            error!("Couldn't find configured subnet for {}", &reservation.ipv4);
             return None;
         }
     };
@@ -142,16 +145,17 @@ fn handle_discover(
 /// DHCPREQUEST - Client message to servers either (a) requesting offered parameters from one server
 /// and implicitly declining offers from all others, (b) confirming correctness of previously allocated
 /// address after, e.g., system reboot, or (c) extending the lease on a particular network address
+#[instrument(skip(reservations, config, msg, leases),
+fields(mac = field::Empty, xid = %msg.xid()))]
 fn handle_request(
     reservations: &ReservationDb,
     leases: &LeaseDb,
     config: &Config,
     msg: &v4::Message,
 ) -> Option<v4::Message> {
-    println!("DHCPRequest");
     // client MUST include the 'server identifier' for this server
     if msg.server_id()? != &server_id() {
-        println!(
+        warn!(
             "DHCPREQUEST message includes Server ID that doesn't match this server: {:?}",
             msg.server_id()
         );
@@ -161,6 +165,8 @@ fn handle_request(
     // get client hwaddr, or option82 key
     let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
     let relay = msg.relay_agent_information();
+    Span::current().record("mac", field::display(mac_addr));
+    info!("DHCPRequest");
 
     // MAC reservations are higher priority than Option82:
     let reservation = match reservations
@@ -168,9 +174,12 @@ fn handle_request(
         .or(relay.and_then(|relay_info| {
             get_reservation_by_relay_information(reservations, config, relay_info)
         })) {
-        Some(r) => r,
+        Some(r) => {
+            info!(ipv4 = %r.ipv4, "Found reservation for IP");
+            r
+        }
         None => {
-            println!("No reservation for ___ ");
+            info!("No reservation found");
             return None;
         }
     };
@@ -183,7 +192,7 @@ fn handle_request(
     {
         Some((gw, subnet)) => (gw, subnet),
         None => {
-            eprintln!("Couldn't find configured subnet for {}", &reservation.ipv4);
+            warn!("Couldn't find configured subnet for {}", &reservation.ipv4);
             return None;
         }
     };
@@ -225,10 +234,8 @@ fn handle_request(
             leases.insert_mac_option82_binding(&mac_addr, &opt);
         }
     } else {
-        println!(
-            "DHCPREQUEST message requested ip {:?} doesn't match reserved address: {:?}, sending DHCPNAK",
-            msg.requested_ip_addr(),
-            reservation
+        warn!(ipv4 = %reservation.ipv4, requested = ?msg.requested_ip_addr(),
+            "requested ip doesn't match reserved address, sending DHCPNAK",
         );
         opts.insert(DhcpOption::MessageType(v4::MessageType::Nak));
         opts.insert(DhcpOption::ServerIdentifier(server_id()));
@@ -259,7 +266,7 @@ fn get_reservation_by_relay_information(
         subscriber,
     };
 
-    println!("{option:?}");
+    debug!("{option:?}");
 
     config.option82_extractors.iter().find_map(|extractor| {
         extractor(&option).and_then(|extracted_opt| reservations.by_opt82(&extracted_opt))
@@ -274,20 +281,20 @@ pub fn v4_worker(
     let mut read_buf = [0u8; 2048];
     let bind_addr = std::env::var("SHADOW_DHCP4_BIND").unwrap_or("0.0.0.0:67".into());
     let socket = UdpSocket::bind(&bind_addr).expect("udp bind");
-    println!("Successfully bound to: {bind_addr}");
+    info!("Successfully bound to: {bind_addr}");
 
     loop {
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
-                println!("Received {amount} bytes from {src:?}");
-                println!("Data: {:x?}", &read_buf[..amount]);
+                debug!("Received {amount} bytes from {src:?}");
+                debug!("Data: {:x?}", &read_buf[..amount]);
                 (amount, src)
             }
             Err(err) => {
-                eprintln!("Error receiving: {err:?}");
+                error!("Error receiving: {err:?}");
                 match err.kind() {
                     io::ErrorKind::ConnectionReset => {
-                        eprintln!("Sent response to host that responded with ICMP unreachable");
+                        info!("Sent response to host that responded with ICMP unreachable");
                         continue;
                     }
                     _ => todo!(),
@@ -302,13 +309,13 @@ pub fn v4_worker(
                 {
                     let write_buf = response_msg.to_vec().expect("encoding response message");
                     match socket.send_to(&write_buf, src) {
-                        Ok(sent) => println!("responded with {sent} bytes"),
-                        Err(e) => eprintln!("Problem sending response message: {e}"),
+                        Ok(sent) => debug!("responded with {sent} bytes"),
+                        Err(e) => error!("Problem sending response message: {e}"),
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Unable to parse dhcpv4 message {}", e);
+                error!("Unable to parse dhcpv4 message {}", e);
             }
         }
     }

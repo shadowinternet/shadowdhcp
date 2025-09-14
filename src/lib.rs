@@ -5,7 +5,7 @@ use std::{
 };
 
 use advmac::MacAddr6;
-use compact_str::CompactString;
+use compact_str::{format_compact, CompactString, CompactStringExt};
 use dhcproto::v4::relay::RelayAgentInformation;
 use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{de::Visitor, Deserialize, Serialize};
@@ -14,6 +14,7 @@ use crate::extractors::Option82ExtractorFn;
 
 pub mod extractors;
 pub mod leasedb;
+pub mod logging;
 pub mod reservationdb;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
@@ -111,6 +112,22 @@ pub struct Option82 {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Duid {
     pub bytes: Vec<u8>,
+}
+
+impl Duid {
+    pub fn to_colon_string(&self) -> String {
+        self.bytes
+            .iter()
+            .map(|byte| format_compact!("{:x}", byte))
+            .join_compact(":")
+            .to_string()
+    }
+}
+
+impl fmt::Display for Duid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x?}", self.bytes)
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for Duid {

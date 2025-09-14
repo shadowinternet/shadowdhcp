@@ -1,5 +1,6 @@
 use advmac::MacAddr6;
 use dashmap::DashMap;
+use tracing::info;
 
 use crate::{LeaseV4, LeaseV6, Option82, Reservation};
 
@@ -26,21 +27,18 @@ impl LeaseDb {
     pub fn leased_new_v6(&self, reservation: &Reservation, lease: LeaseV6) {
         match self.v6.insert(reservation.to_owned(), lease.clone()) {
             Some(old_lease) => {
-                println!(
-                    "replaced existing lease {:?}, {:?} {old_lease:?} with new lease {lease:?}",
-                    reservation.ipv6_na, reservation.ipv6_pd
+                info!(ipv6_na = %reservation.ipv6_na, ipv6_pd = %reservation.ipv6_pd, "replaced existing lease {old_lease:?} with new lease {lease:?}")
+            }
+            None => {
+                info!(ipv6_na = %reservation.ipv6_na, ipv6_pd = %reservation.ipv6_pd, duid = ?lease.duid, mac = ?lease.mac, "first time leased address"
                 )
             }
-            None => println!(
-                "First time leased address: {:?}, {:?} to DUID {:x?} MAC {:?}",
-                reservation.ipv6_na, reservation.ipv6_pd, lease.duid, lease.mac
-            ),
         }
     }
 
-    pub fn insert_mac_option82_binding(&self, mac_addr: &MacAddr6, opt: &Option82) {
-        println!("Adding mac -> Option82 binding: {mac_addr} {opt:?}");
-        self.mac_to_opt82.insert(*mac_addr, opt.clone());
+    pub fn insert_mac_option82_binding(&self, mac: &MacAddr6, opt: &Option82) {
+        info!(%mac, option82 = ?opt, "added mac -> option82 binding");
+        self.mac_to_opt82.insert(*mac, opt.clone());
     }
 
     pub fn get_opt82_by_mac(&self, mac_addr: &MacAddr6) -> Option<Option82> {

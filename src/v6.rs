@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use tracing::{debug, error, field, info, instrument, Span};
 
 // handle retransmissions
 // renew of existing lease
@@ -42,7 +43,7 @@ pub fn v6_worker(
     // only work with relayed messages
     let bind_addr = std::env::var("SHADOW_DHCP6_BIND").unwrap_or("[::]:547".into());
     let socket = UdpSocket::bind(&bind_addr).expect("udp bind");
-    println!("Successfully bound to: {bind_addr}");
+    info!("Successfully bound to: {bind_addr}");
     let mut read_buf = [0u8; 2048];
 
     // listen for messages
@@ -50,18 +51,18 @@ pub fn v6_worker(
         // if the src is not listening on response, it may send a ICMP host unreachable
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
-                println!("Received {amount} bytes from {src:?}");
-                println!("Data: {:x?}", &read_buf[..amount]);
+                debug!("Received {amount} bytes from {src:?}");
+                debug!("Data: {:x?}", &read_buf[..amount]);
                 (amount, src)
             }
             Err(err) => {
-                eprintln!("Error receiving: {err:?}");
+                error!("Error receiving: {err:?}");
                 match err.kind() {
                     io::ErrorKind::NotFound => todo!(),
                     io::ErrorKind::PermissionDenied => todo!(),
                     io::ErrorKind::ConnectionRefused => todo!(),
                     io::ErrorKind::ConnectionReset => {
-                        eprintln!("Sent response to host that responded with ICMP unreachable");
+                        error!("Sent response to host that responded with ICMP unreachable");
                         continue;
                     }
                     io::ErrorKind::ConnectionAborted => todo!(),
@@ -126,36 +127,34 @@ pub fn v6_worker(
 
                     let write_buf = relay_msg.to_vec().expect("encoding response msg");
                     match socket.send_to(&write_buf, src) {
-                        Ok(sent) => println!("responded with {sent} bytes"),
-                        Err(e) => eprintln!("Problem sending respones message: {e}"),
+                        Ok(sent) => debug!("responded with {sent} bytes"),
+                        Err(e) => error!("Problem sending respones message: {e}"),
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Unable to parse dhcp message {}", e);
+                error!("Unable to parse dhcp message {}", e);
             }
         };
     }
 }
 
+#[instrument(skip(reservations, leases, msg, relay_msg),
+fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_solicit(
     reservations: &ReservationDb,
     leases: &LeaseDb,
     msg: v6::Message,
     relay_msg: &v6::RelayMessage,
 ) -> Option<v6::Message> {
-    println!("Received Solicit message");
-
     // Servers MUST discard any Solicit messages that do not include a Client identifier
     // option or that do include a Server Identifier option
     let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
-    println!(
-        "ClientID: {:x?}, hw_addr: {:?}",
-        client_id.bytes,
-        relay_msg.hw_addr()
-    );
+    Span::current().record("client_id", field::display(&client_id.to_colon_string()));
+    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     if msg.server_id().is_some() {
+        info!("Client included a server_id field, ignoring");
         return None;
     }
 
@@ -164,10 +163,10 @@ fn handle_solicit(
     let msg_type = if msg.rapid_commit() {
         // TODO: the server needs to include the rapid commit option in replys to a rapid commit
         // https://datatracker.ietf.org/doc/html/rfc8415#section-21.14
-        println!("Solicit 2 message exchange, rapid commit");
+        debug!("Solicit 2 message exchange, rapid commit");
         v6::MessageType::Reply
     } else {
-        println!("Solicit 4 message exchange");
+        debug!("Solicit 4 message exchange");
         v6::MessageType::Advertise
     };
 
@@ -236,12 +235,14 @@ fn handle_solicit(
             Some(reply)
         }
         None => {
-            eprintln!("Solicit request with no reservation for DUID");
+            info!("Solicit request with no reservation for DUID");
             None
         }
     }
 }
 
+#[instrument(skip(reservations, leases, msg, relay_msg),
+fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_renew(
     reservations: &ReservationDb,
     leases: &LeaseDb,
@@ -251,20 +252,16 @@ fn handle_renew(
     // client is refreshing existing lease, check that the addresses/prefixes sent
     // by the client are the ones we have reserved for them
 
-    // message MUST include ServerIdentifier option AND match this Server's identity
-    if msg.server_id()? != server_id() {
-        eprintln!("Client sent server_identifier that doesn't match this server");
-        return None;
-    }
-
     // message MUST include a ClientIdentifier option
     let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    Span::current().record("client_id", field::display(&client_id.to_colon_string()));
+    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
-    println!(
-        "ClientID: {:x?}, hw_addr: {:?}",
-        client_id,
-        relay_msg.hw_addr()
-    );
+    // message MUST include ServerIdentifier option AND match this Server's identity
+    if msg.server_id()? != server_id() {
+        error!("Client sent server_identifier that doesn't match this server");
+        return None;
+    }
 
     let mut reply = v6::Message::new_with_id(v6::MessageType::Reply, msg.xid());
     let opts = reply.opts_mut();
@@ -384,29 +381,24 @@ fn handle_renew(
     Some(reply)
 }
 
+#[instrument(skip(reservations, leases, msg, relay_msg),
+fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_request(
     reservations: &ReservationDb,
     leases: &LeaseDb,
     msg: v6::Message,
     relay_msg: &v6::RelayMessage,
 ) -> Option<Message> {
-    println!("Received Request message");
-
     // Servers MUST discard any Request messages that:
     // * does not include a Client Identifier
     // * does not include a Server Identifier option
     // * includes a Server Identifier option that does not match this server's DUID
     let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
-    println!(
-        "ClientID: {:x?}, hw_addr: {:?}",
-        client_id,
-        relay_msg.hw_addr()
-    );
+    Span::current().record("client_id", field::display(&client_id.to_colon_string()));
+    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
+
     if msg.server_id()? != server_id() {
-        println!(
-            "Advertise message includes Server ID that doesn't match this server: {:?}",
-            msg.server_id()
-        );
+        error!("Client sent server_identifier that doesn't match this server");
         return None;
     }
 
@@ -475,7 +467,7 @@ fn handle_request(
             Some(reply)
         }
         None => {
-            eprintln!("Request with no reservation for DUID");
+            info!("No reservation found");
             None
         }
     }
@@ -531,7 +523,7 @@ fn handle_message(
         // v6::MessageType::DHCPv4Response => todo!(),
         // v6::MessageType::Unknown(_) => todo!(),
         _ => {
-            eprintln!(
+            error!(
                 "MessageType `{:?}` not implemented by ddhcpv6",
                 msg.msg_type()
             );

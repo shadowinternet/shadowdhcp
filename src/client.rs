@@ -1,8 +1,12 @@
 use dhcproto::{v6, Decodable, Encodable};
+use shadow_dhcpv6::logging;
+use tracing::debug;
 
 use std::net::{Ipv6Addr, UdpSocket};
 
 fn main() {
+    logging::init_stdout();
+
     let msg = dhcpv6_test_request().to_vec().expect("encoding test msg");
 
     // send message to localhost udp
@@ -13,10 +17,10 @@ fn main() {
 
     let mut recv_buf = vec![0u8; 1500];
     let recv_bytes = socket.recv(&mut recv_buf).expect("socket recv");
-    println!("received {recv_bytes} bytes in response");
+    debug!("received {recv_bytes} bytes in response");
 
     let msg = v6::RelayMessage::from_bytes(&recv_buf[..recv_bytes]).expect("parsing response");
-    println!("msg: {msg}");
+    debug!("msg: {msg}");
 }
 
 fn dhcpv6_test_request() -> v6::RelayMessage {

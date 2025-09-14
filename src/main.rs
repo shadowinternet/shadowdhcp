@@ -3,13 +3,17 @@ use std::{net::Ipv4Addr, sync::Arc, thread};
 use advmac::MacAddr6;
 use arc_swap::ArcSwap;
 use shadow_dhcpv6::{
-    extractors, leasedb::LeaseDb, reservationdb::ReservationDb, Config, Reservation, V4Subnet,
+    extractors, leasedb::LeaseDb, logging, reservationdb::ReservationDb, Config, Reservation,
+    V4Subnet,
 };
+use tracing::info;
 
 mod v4;
 mod v6;
 
 fn main() {
+    logging::init_stdout();
+
     let subnets_v4 = vec![
         V4Subnet {
             net: "192.168.0.0/24".parse().unwrap(),
@@ -40,7 +44,7 @@ fn main() {
     {
         let mydb = db.load();
         if let Some(res) = mydb.by_mac(&MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55])) {
-            println!("ReservationDb reservation: {res:?}");
+            info!("Test ReservationDb reservation: {res:?}");
         }
     }
 
@@ -48,8 +52,14 @@ fn main() {
         let v4db = db.clone();
         let v4leases = leases.clone();
         let v4config = config.clone();
-        let v6worker = s.spawn(|| v6::v6_worker(db, leases, config));
-        let v4worker = s.spawn(|| v4::v4_worker(v4db, v4leases, v4config));
+        let v6worker = thread::Builder::new()
+            .name("v6worker".to_string())
+            .spawn_scoped(s, || v6::v6_worker(db, leases, config))
+            .expect("v6worker spawn");
+        let v4worker = thread::Builder::new()
+            .name("v4worker".to_string())
+            .spawn_scoped(s, || v4::v4_worker(v4db, v4leases, v4config))
+            .expect("v4worker spawn");
 
         let _ = v6worker.join();
         let _ = v4worker.join();

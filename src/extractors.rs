@@ -2,6 +2,7 @@ use std::{collections::HashMap, str::FromStr};
 
 use advmac::MacAddr6;
 use compact_str::ToCompactString;
+use tracing::{debug, info};
 
 use crate::Option82;
 
@@ -67,16 +68,14 @@ pub fn remote_first_12(opt: &Option82) -> Option<Option82> {
 
     match mac {
         Some(mac) => {
-            println!("Extracted MAC with remote_first_12 extractor: {}", mac);
+            info!(%mac, "Extracted MAC with remote_first_12 extractor");
             Some(Option82 {
                 circuit: None,
                 remote: Some(mac.to_compact_string()),
                 subscriber: None,
             })
         }
-        None => {
-            None
-        }
+        None => None,
     }
 }
 
@@ -89,7 +88,7 @@ pub fn normalize_remote_mac(opt: &Option82) -> Option<Option82> {
 
     match mac {
         Some(mac) => {
-            println!("Normalized remote MAC {}", mac);
+            info!(%mac, "Normalized remote MAC");
             Some(Option82 {
                 circuit: None,
                 remote: Some(mac.to_compact_string()),
@@ -97,7 +96,7 @@ pub fn normalize_remote_mac(opt: &Option82) -> Option<Option82> {
             })
         }
         None => {
-            println!("Normalize remote MAC didn't find a parseable MAC");
+            debug!("Normalize remote MAC didn't find a parseable MAC");
             None
         }
     }
@@ -113,10 +112,7 @@ pub fn get_all_extractors() -> HashMap<&'static str, Option82ExtractorFn> {
         circuit_and_remote as Option82ExtractorFn,
     );
     extractors.insert("circuit_only", circuit_only as Option82ExtractorFn);
-    extractors.insert(
-        "remote_first_12",
-        remote_first_12 as Option82ExtractorFn,
-    );
+    extractors.insert("remote_first_12", remote_first_12 as Option82ExtractorFn);
     extractors.insert(
         "normalize_remote_mac",
         normalize_remote_mac as Option82ExtractorFn,
