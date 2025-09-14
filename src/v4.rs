@@ -13,15 +13,11 @@ use std::{
 use tracing::{debug, error, field, info, instrument, trace, warn, Span};
 
 use shadow_dhcpv6::{
-    leasedb::LeaseDb, reservationdb::ReservationDb, Config, Option82, RelayAgentInformationExt,
-    Reservation, V4Key,
+    config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, Option82,
+    RelayAgentInformationExt, Reservation, V4Key,
 };
 
 const ADDRESS_LEASE_TIME: u32 = 3600;
-
-fn server_id() -> Ipv4Addr {
-    Ipv4Addr::from([23, 159, 144, 10])
-}
 
 /// 4.3 A DHCP server can receive the following messages from a client:
 /// * DHCPDISCOVER
@@ -132,7 +128,7 @@ fn handle_discover(
     let opts = reply.opts_mut();
 
     opts.insert(DhcpOption::MessageType(v4::MessageType::Offer));
-    opts.insert(DhcpOption::ServerIdentifier(server_id()));
+    opts.insert(DhcpOption::ServerIdentifier(config.v4_server_id));
     opts.insert(DhcpOption::SubnetMask(subnet_mask));
     opts.insert(DhcpOption::Router(vec![gateway]));
     opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
@@ -154,7 +150,7 @@ fn handle_request(
     msg: &v4::Message,
 ) -> Option<v4::Message> {
     // client MUST include the 'server identifier' for this server
-    if msg.server_id()? != &server_id() {
+    if msg.server_id()? != &config.v4_server_id {
         warn!(
             "DHCPREQUEST message includes Server ID that doesn't match this server: {:?}",
             msg.server_id()
@@ -222,7 +218,7 @@ fn handle_request(
         // If the server is unable to satisfy the DHCPREQUEST message (e.g., the address is already allocated) the
         // server should respond with a DHCPNAK message.
         opts.insert(DhcpOption::MessageType(v4::MessageType::Ack));
-        opts.insert(DhcpOption::ServerIdentifier(server_id()));
+        opts.insert(DhcpOption::ServerIdentifier(config.v4_server_id));
         opts.insert(DhcpOption::SubnetMask(subnet_mask));
         opts.insert(DhcpOption::Router(vec![gateway]));
         opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
@@ -238,7 +234,7 @@ fn handle_request(
             "requested ip doesn't match reserved address, sending DHCPNAK",
         );
         opts.insert(DhcpOption::MessageType(v4::MessageType::Nak));
-        opts.insert(DhcpOption::ServerIdentifier(server_id()));
+        opts.insert(DhcpOption::ServerIdentifier(config.v4_server_id));
         opts.insert(DhcpOption::End);
     }
 

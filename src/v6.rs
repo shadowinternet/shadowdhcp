@@ -5,7 +5,7 @@ use dhcproto::{
     Decodable, Encodable,
 };
 use ipnet::Ipv6Net;
-use shadow_dhcpv6::{leasedb::LeaseDb, reservationdb::ReservationDb, Config, LeaseV6};
+use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, LeaseV6};
 use std::{
     io,
     net::{Ipv6Addr, UdpSocket},
@@ -33,12 +33,11 @@ use tracing::{debug, error, field, info, instrument, trace, Span};
 
 const PREFERRED_LIFETIME: u32 = 120;
 const VALID_LIFETIME: u32 = 240;
-const SERVER_ID: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 pub fn v6_worker(
     reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
     leases: Arc<LeaseDb>,
-    _config: Arc<ArcSwapAny<Arc<Config>>>,
+    config: Arc<ArcSwapAny<Arc<Config>>>,
 ) {
     // only work with relayed messages
     let bind_addr = std::env::var("SHADOW_DHCP6_BIND").unwrap_or("[::]:547".into());
@@ -99,9 +98,13 @@ pub fn v6_worker(
                     None => continue,
                 };
 
-                if let Some(response_msg) =
-                    handle_message(&reservations.load(), &leases, inner_msg, &msg)
-                {
+                if let Some(response_msg) = handle_message(
+                    &config.load(),
+                    &reservations.load(),
+                    &leases,
+                    inner_msg,
+                    &msg,
+                ) {
                     // wrap the message in a RelayRepl
                     let mut relay_reply_opts = DhcpOptions::new();
                     relay_reply_opts.insert(DhcpOption::RelayMsg(v6::RelayMessageData::Message(
@@ -139,9 +142,10 @@ pub fn v6_worker(
     }
 }
 
-#[instrument(skip(reservations, leases, msg, relay_msg),
+#[instrument(skip(config, reservations, leases, msg, relay_msg),
 fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_solicit(
+    config: &Config,
     reservations: &ReservationDb,
     leases: &LeaseDb,
     msg: v6::Message,
@@ -230,7 +234,7 @@ fn handle_solicit(
                 }));
             }
 
-            opts.insert(DhcpOption::ServerId(server_id().to_vec()));
+            opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
             opts.insert(DhcpOption::ClientId(client_id.bytes));
             Some(reply)
         }
@@ -241,9 +245,10 @@ fn handle_solicit(
     }
 }
 
-#[instrument(skip(reservations, leases, msg, relay_msg),
+#[instrument(skip(config, reservations, leases, msg, relay_msg),
 fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_renew(
+    config: &Config,
     reservations: &ReservationDb,
     leases: &LeaseDb,
     msg: v6::Message,
@@ -258,7 +263,7 @@ fn handle_renew(
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     // message MUST include ServerIdentifier option AND match this Server's identity
-    if msg.server_id()? != server_id() {
+    if msg.server_id()? != config.v6_server_id.bytes {
         error!("Client sent server_identifier that doesn't match this server");
         return None;
     }
@@ -376,14 +381,15 @@ fn handle_renew(
         }
     };
 
-    opts.insert(DhcpOption::ServerId(server_id().to_vec()));
+    opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
     opts.insert(DhcpOption::ClientId(client_id.bytes));
     Some(reply)
 }
 
-#[instrument(skip(reservations, leases, msg, relay_msg),
+#[instrument(skip(config, reservations, leases, msg, relay_msg),
 fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_request(
+    config: &Config,
     reservations: &ReservationDb,
     leases: &LeaseDb,
     msg: v6::Message,
@@ -397,7 +403,7 @@ fn handle_request(
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
-    if msg.server_id()? != server_id() {
+    if msg.server_id()? != config.v6_server_id.bytes {
         error!("Client sent server_identifier that doesn't match this server");
         return None;
     }
@@ -462,7 +468,7 @@ fn handle_request(
                 }));
             }
 
-            opts.insert(DhcpOption::ServerId(server_id().to_vec()));
+            opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
             opts.insert(DhcpOption::ClientId(client_id.bytes));
             Some(reply)
         }
@@ -474,6 +480,7 @@ fn handle_request(
 }
 
 fn handle_message(
+    config: &Config,
     reservations: &ReservationDb,
     leases: &LeaseDb,
     msg: v6::Message,
@@ -484,12 +491,12 @@ fn handle_message(
         // https://datatracker.ietf.org/doc/html/rfc8415#section-16.2
         // Four-message exchange - Solicit -> Advertisement -> Request -> Reply
         // Two-message exchange (rapid commit) - Solicit -> Reply
-        v6::MessageType::Solicit => handle_solicit(reservations, leases, msg, relay_msg),
+        v6::MessageType::Solicit => handle_solicit(config, reservations, leases, msg, relay_msg),
         // Servers always discard Advertise
         v6::MessageType::Advertise => None,
         // A client sends a Request as part of the 4 message exchange to receive an initial address/prefix
         // https://datatracker.ietf.org/doc/html/rfc8415#section-16.4
-        v6::MessageType::Request => handle_request(reservations, leases, msg, relay_msg),
+        v6::MessageType::Request => handle_request(config, reservations, leases, msg, relay_msg),
         // v6::MessageType::Confirm => todo!(),
 
         // 18.2.4.  Creation and Transmission of Renew Messages
@@ -504,7 +511,7 @@ fn handle_message(
         //   the IAs.  The client includes IA Prefix options (see Section 21.22)
         //   within IA_PD options (see Section 21.21) for the delegated prefixes
         //   assigned to the IAs.
-        v6::MessageType::Renew => handle_renew(reservations, leases, msg, relay_msg),
+        v6::MessageType::Renew => handle_renew(config, reservations, leases, msg, relay_msg),
         // v6::MessageType::Rebind => todo!(),
         // v6::MessageType::Reply => todo!(),
         // v6::MessageType::Release => todo!(),
@@ -621,16 +628,12 @@ impl HardwareAddressFromMessage for RelayMessage {
     }
 }
 
-fn server_id() -> [u8; 16] {
-    SERVER_ID
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Reservation;
     use shadow_dhcpv6::Option82;
-    use std::net::Ipv6Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
     use v6::MessageType;
 
     #[test]
@@ -823,6 +826,30 @@ mod tests {
         println!("{msg:?}");
     }
 
+    fn basic_config() -> Config {
+        let subnets_v4 = vec![
+            V4Subnet {
+                net: "192.168.0.0/24".parse().unwrap(),
+                gateway: "192.168.0.1".parse().unwrap(),
+            },
+            V4Subnet {
+                net: "100.110.1.0/24".parse().unwrap(),
+                gateway: "100.110.1.1".parse().unwrap(),
+            },
+        ];
+        let dns_v4 = vec![Ipv4Addr::from([8, 8, 8, 8]), Ipv4Addr::from([8, 8, 4, 4])];
+        let v4_server_id = Ipv4Addr::from([23, 159, 144, 10]);
+        let v6_server_id = Duid::from(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+
+        let config = Config {
+            v4_server_id,
+            dns_v4,
+            subnets_v4,
+            v6_server_id,
+            option82_extractors: extractors::get_all_extractors().into_values().collect(),
+        };
+    }
+
     #[test]
     fn dynamic_opt82_binding() {
         let json_str = r#"
@@ -892,7 +919,7 @@ mod tests {
             opts: relay_opts,
         };
 
-        let resp = handle_solicit(&db, &leases, msg, &relay_msg).unwrap();
+        let resp = handle_solicit(&basic_config(), &db, &leases, msg, &relay_msg).unwrap();
         assert!(matches!(resp.msg_type(), v6::MessageType::Advertise));
 
         let reservation = db.by_opt82(&opt82).unwrap();

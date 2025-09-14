@@ -10,8 +10,7 @@ use dhcproto::v4::relay::RelayAgentInformation;
 use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{de::Visitor, Deserialize, Serialize};
 
-use crate::extractors::Option82ExtractorFn;
-
+pub mod config;
 pub mod extractors;
 pub mod leasedb;
 pub mod logging;
@@ -78,12 +77,6 @@ pub struct V4Subnet {
     pub gateway: Ipv4Addr,
 }
 
-pub struct Config {
-    pub dns_v4: Vec<Ipv4Addr>,
-    pub subnets_v4: Vec<V4Subnet>,
-    pub option82_extractors: Vec<Option82ExtractorFn>,
-}
-
 #[derive(Debug, Clone)]
 pub struct LeaseV4 {
     pub first_leased: Instant,
@@ -109,6 +102,7 @@ pub struct Option82 {
     pub subscriber: Option<CompactString>,
 }
 
+// TODO: limit length of bytes
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Duid {
     pub bytes: Vec<u8>,
