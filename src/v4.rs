@@ -2,7 +2,7 @@ use advmac::MacAddr6;
 use arc_swap::ArcSwapAny;
 use compact_str::CompactString;
 use dhcproto::{
-    v4::{self, relay::RelayAgentInformation, DhcpOption},
+    v4::{self, relay::RelayAgentInformation, DhcpOption, Flags},
     Decodable, Encodable,
 };
 use std::{
@@ -13,8 +13,8 @@ use std::{
 use tracing::{debug, error, field, info, instrument, trace, warn, Span};
 
 use shadow_dhcpv6::{
-    config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, Option82,
-    RelayAgentInformationExt, Reservation, V4Key,
+    config::Config, extractors::Option82ExtractorFn, leasedb::LeaseDb,
+    reservationdb::ReservationDb, Option82, RelayAgentInformationExt, Reservation, V4Key,
 };
 
 const ADDRESS_LEASE_TIME: u32 = 3600;
@@ -42,24 +42,15 @@ fn handle_message(
 
     match message_type {
         v4::MessageType::Discover => handle_discover(reservations, config, &msg),
-        v4::MessageType::Offer => None,
         v4::MessageType::Request => handle_request(reservations, leases, config, &msg),
-        v4::MessageType::Decline => todo!(),
-        v4::MessageType::Ack => None,
-        v4::MessageType::Nak => None,
-        v4::MessageType::Release => todo!(),
-        v4::MessageType::Inform => todo!(),
-        v4::MessageType::ForceRenew => None,
-        v4::MessageType::LeaseQuery => None,
-        v4::MessageType::LeaseUnassigned => None,
-        v4::MessageType::LeaseUnknown => None,
-        v4::MessageType::LeaseActive => None,
-        v4::MessageType::BulkLeaseQuery => None,
-        v4::MessageType::LeaseQueryDone => None,
-        v4::MessageType::ActiveLeaseQuery => None,
-        v4::MessageType::LeaseQueryStatus => None,
-        v4::MessageType::Tls => None,
-        v4::MessageType::Unknown(_) => None,
+        v4::MessageType::Decline => None,
+        v4::MessageType::Release => None,
+        // If a client has obtained a network address through some other means (e.g., manual configuration), it
+        // may use a DHCPINFORM request message to obtain other local configuration parameters. Unicast reply sent
+        // to the client.
+        v4::MessageType::Inform => None,
+        // Other messages are not valid for a server to receive
+        _ => None,
     }
 }
 
@@ -86,7 +77,11 @@ fn handle_discover(
     let reservation = match reservations
         .by_mac(&mac_addr)
         .or(relay.and_then(|relay_info| {
-            get_reservation_by_relay_information(reservations, config, relay_info)
+            get_reservation_by_relay_information(
+                reservations,
+                &config.option82_extractors,
+                relay_info,
+            )
         })) {
         Some(r) => {
             info!(ipv4 = %r.ipv4, "Found reservation for IP");
@@ -141,6 +136,8 @@ fn handle_discover(
 /// DHCPREQUEST - Client message to servers either (a) requesting offered parameters from one server
 /// and implicitly declining offers from all others, (b) confirming correctness of previously allocated
 /// address after, e.g., system reboot, or (c) extending the lease on a particular network address
+///
+/// <https://datatracker.ietf.org/doc/html/rfc2131#section-4.3.2>
 #[instrument(skip(reservations, config, msg, leases),
 fields(mac = field::Empty, xid = %msg.xid()))]
 fn handle_request(
@@ -149,16 +146,23 @@ fn handle_request(
     config: &Config,
     msg: &v4::Message,
 ) -> Option<v4::Message> {
-    // client MUST include the 'server identifier' for this server
-    if msg.server_id()? != &config.v4_server_id {
-        warn!(
-            "DHCPREQUEST message includes Server ID that doesn't match this server: {:?}",
-            msg.server_id()
-        );
-        return None;
-    }
+    // Four variants of DHCPREQUEST
+    //  * SELECTING
+    //    server id is set from the client and matches
+    //    ciaddr must be zero
+    //    requested ip address option must be filled with the value received previously in the DHCPOFFER from the server
+    //    giaddr contains relay IP address
+    //  * INIT/REBOOT
+    //    no server id from client
+    //    ciaddr must be zero
+    //    requested ip address option must be filled
+    //  * RENEW - client trying to extend its lease, sent unicast directly to server
+    //    server id is not set
+    //    ciaddr must be filled in
+    //    requested ip address option is not filled in
+    //  * REBINDING - when client can not reach server unicast, it broadcasts.
+    //    same prereqs as RENEW, but sent via the relay
 
-    // get client hwaddr, or option82 key
     let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
     let relay = msg.relay_agent_information();
     Span::current().record("mac", field::display(mac_addr));
@@ -168,7 +172,11 @@ fn handle_request(
     let reservation = match reservations
         .by_mac(&mac_addr)
         .or(relay.and_then(|relay_info| {
-            get_reservation_by_relay_information(reservations, config, relay_info)
+            get_reservation_by_relay_information(
+                reservations,
+                &config.option82_extractors,
+                relay_info,
+            )
         })) {
         Some(r) => {
             info!(ipv4 = %r.ipv4, "Found reservation for IP");
@@ -204,14 +212,43 @@ fn handle_request(
     );
     reply.set_opcode(v4::Opcode::BootReply);
     reply.set_secs(0);
+    // TODO: check flags are correct
     reply.set_flags(msg.flags());
     reply.set_sname("dhcp.shadowinter.net".as_bytes());
 
+    // select one of the four variants:
+    let variant_tuple = (msg.server_id(), &msg.ciaddr(), msg.requested_ip_addr());
+    let client_requested_ip = match variant_tuple {
+        (Some(server_id), &Ipv4Addr::UNSPECIFIED, Some(requested_ip)) => {
+            debug!("variant: selecting");
+            if server_id != &config.v4_server_id {
+                info!(%server_id, "SELECTING server id did not match");
+                return None;
+            }
+            requested_ip
+        }
+        (None, &Ipv4Addr::UNSPECIFIED, Some(requested_ip)) => {
+            debug!("variant: init-reboot");
+            requested_ip
+        }
+        (None, ciaddr, None) if ciaddr != &Ipv4Addr::UNSPECIFIED => {
+            if msg.giaddr() == Ipv4Addr::UNSPECIFIED {
+                debug!("variant: renew")
+            } else {
+                debug!("variant: rebinding")
+            }
+            reply.set_yiaddr(Ipv4Addr::UNSPECIFIED); // clients already know their address from ciaddr
+            ciaddr
+        }
+        _ => {
+            info!("Unrecognized DHCPREQUEST variant");
+            return None;
+        }
+    };
+
     let opts = reply.opts_mut();
 
-    // the 'requested IP address' option MUST be set to the value of 'yiaddr' in the DHCPOFFER message
-    // from the server
-    if msg.requested_ip_addr() == Some(&reservation.ipv4) {
+    if client_requested_ip == &reservation.ipv4 {
         // the server selected in the DHCPREQUEST message commits the binding, and responds with a DHCPACK message
         // containing the configuration parameters for the requesting client. The combination of 'client identifier'
         // or 'chaddr' and assigned network address constitute a unique identifier for the client's lease.
@@ -223,6 +260,8 @@ fn handle_request(
         opts.insert(DhcpOption::Router(vec![gateway]));
         opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
         opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
+        // TODO: add T1 (renewal time) and T2 (rebinding time)
+        // TODO: add support for parameter request list option
         opts.insert(DhcpOption::End);
 
         // if option82, update the option82 to MAC address mapping:
@@ -230,12 +269,17 @@ fn handle_request(
             leases.insert_mac_option82_binding(&mac_addr, &opt);
         }
     } else {
-        warn!(ipv4 = %reservation.ipv4, requested = ?msg.requested_ip_addr(),
-            "requested ip doesn't match reserved address, sending DHCPNAK",
+        warn!(reservation_ipv4 = %reservation.ipv4, %client_requested_ip,
+            "client requested ip doesn't match reserved address, sending DHCPNAK",
         );
         opts.insert(DhcpOption::MessageType(v4::MessageType::Nak));
         opts.insert(DhcpOption::ServerIdentifier(config.v4_server_id));
         opts.insert(DhcpOption::End);
+        if msg.giaddr() != Ipv4Addr::UNSPECIFIED {
+            // init-reboot NAK should set broadcast bit when relayed
+            let flags = reply.flags();
+            reply.set_flags(Flags::set_broadcast(flags));
+        }
     }
 
     Some(reply)
@@ -243,7 +287,7 @@ fn handle_request(
 
 fn get_reservation_by_relay_information(
     reservations: &ReservationDb,
-    config: &Config,
+    extractors: &[Option82ExtractorFn],
     relay: &RelayAgentInformation,
 ) -> Option<Arc<Reservation>> {
     let circuit = relay
@@ -264,7 +308,7 @@ fn get_reservation_by_relay_information(
 
     debug!("{option:?}");
 
-    config.option82_extractors.iter().find_map(|extractor| {
+    extractors.iter().find_map(|extractor| {
         extractor(&option).and_then(|extracted_opt| reservations.by_opt82(&extracted_opt))
     })
 }
