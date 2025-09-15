@@ -631,7 +631,7 @@ impl HardwareAddressFromMessage for RelayMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Reservation;
+    use crate::{extractors, Duid, Reservation, V4Subnet};
     use shadow_dhcpv6::Option82;
     use std::net::{Ipv4Addr, Ipv6Addr};
     use v6::MessageType;
@@ -841,13 +841,13 @@ mod tests {
         let v4_server_id = Ipv4Addr::from([23, 159, 144, 10]);
         let v6_server_id = Duid::from(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
-        let config = Config {
+        Config {
             v4_server_id,
             dns_v4,
             subnets_v4,
             v6_server_id,
             option82_extractors: extractors::get_all_extractors().into_values().collect(),
-        };
+        }
     }
 
     #[test]
