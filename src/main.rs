@@ -84,7 +84,7 @@ fn main() {
 const HELP: &str = "\
 shadowdhcp
 
-A DHCPv4 and DHCPv6 server that only responds to relayed or unicast requests.
+A reservation only DHCPv4 and DHCPv6 server designed for internet service providers.
 
 USAGE:
   shadowdhcp [OPTIONS]
