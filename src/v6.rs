@@ -165,8 +165,6 @@ fn handle_solicit(
     // Rapid Commit option - The client may request the expedited two-message exchange
     // by adding the Rapid Commit option to the first Solicit request
     let msg_type = if msg.rapid_commit() {
-        // TODO: the server needs to include the rapid commit option in replys to a rapid commit
-        // https://datatracker.ietf.org/doc/html/rfc8415#section-21.14
         debug!("Solicit 2 message exchange, rapid commit");
         v6::MessageType::Reply
     } else {
@@ -192,6 +190,12 @@ fn handle_solicit(
 
             let mut reply = v6::Message::new_with_id(msg_type, msg.xid());
             let opts = reply.opts_mut();
+
+            if matches!(msg_type, v6::MessageType::Reply) {
+                // client requested rapid commit
+                // https://datatracker.ietf.org/doc/html/rfc8415#section-21.14
+                opts.insert(DhcpOption::RapidCommit)
+            }
 
             // Reply contains IA_NA address and IA_PD prefix as options.
             // These options contain nested options with the actual addresses/prefixes
@@ -497,8 +501,6 @@ fn handle_message(
         // A client sends a Request as part of the 4 message exchange to receive an initial address/prefix
         // https://datatracker.ietf.org/doc/html/rfc8415#section-16.4
         v6::MessageType::Request => handle_request(config, reservations, leases, msg, relay_msg),
-        // v6::MessageType::Confirm => todo!(),
-
         // 18.2.4.  Creation and Transmission of Renew Messages
         //
         //   To extend the preferred and valid lifetimes for the leases assigned
@@ -512,23 +514,6 @@ fn handle_message(
         //   within IA_PD options (see Section 21.21) for the delegated prefixes
         //   assigned to the IAs.
         v6::MessageType::Renew => handle_renew(config, reservations, leases, msg, relay_msg),
-        // v6::MessageType::Rebind => todo!(),
-        // v6::MessageType::Reply => todo!(),
-        // v6::MessageType::Release => todo!(),
-        // v6::MessageType::Decline => todo!(),
-        // v6::MessageType::Reconfigure => todo!(),
-        // v6::MessageType::InformationRequest => todo!(),
-        // v6::MessageType::RelayForw => todo!(),
-        // v6::MessageType::RelayRepl => todo!(),
-        // v6::MessageType::LeaseQuery => todo!(),
-        // v6::MessageType::LeaseQueryReply => todo!(),
-        // v6::MessageType::LeaseQueryDone => todo!(),
-        // v6::MessageType::LeaseQueryData => todo!(),
-        // v6::MessageType::ReconfigureRequest => todo!(),
-        // v6::MessageType::ReconfigureReply => todo!(),
-        // v6::MessageType::DHCPv4Query => todo!(),
-        // v6::MessageType::DHCPv4Response => todo!(),
-        // v6::MessageType::Unknown(_) => todo!(),
         _ => {
             error!(
                 "MessageType `{:?}` not implemented by ddhcpv6",
