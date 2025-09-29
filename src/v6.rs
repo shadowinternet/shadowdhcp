@@ -616,8 +616,8 @@ impl HardwareAddressFromMessage for RelayMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{extractors, Duid, Reservation, V4Subnet};
-    use shadow_dhcpv6::Option82;
+    use crate::Reservation;
+    use shadow_dhcpv6::{extractors, Duid, Option82, V4Subnet};
     use std::net::{Ipv4Addr, Ipv6Addr};
     use v6::MessageType;
 
@@ -841,14 +841,14 @@ mod tests {
         [
             {
                 "ipv4": "192.168.1.111",
-                "ipv6_na": "2605:cb40:1:6::1",
-                "ipv6_pd": "2605:cb40:1:7::/56",
+                "ipv6_na": "2001:db8:1:6::1",
+                "ipv6_pd": "2001:db8:1:7::/56",
                 "option82": {"circuit": "99-11-22-33-44-55", "remote": "eth2:100"}
             },
             {
                 "ipv4": "192.168.1.112",
-                "ipv6_na": "2605:cb40:1:8::1",
-                "ipv6_pd": "2605:cb40:1:9::/56",
+                "ipv6_na": "2001:db8:1:8::1",
+                "ipv6_pd": "2001:db8:1:9::/56",
                 "duid": "00:11:22:33:44:55:66",
                 "option82": {"subscriber": "subscriber:1020"}
             }

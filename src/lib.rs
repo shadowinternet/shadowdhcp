@@ -71,7 +71,7 @@ pub struct V6Ip {
     pub ia_pd: Ipv6Net,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct V4Subnet {
     pub net: Ipv4Net,
     pub gateway: Ipv4Addr,
