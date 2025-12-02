@@ -75,7 +75,7 @@ fn handle_discover(
 
     // MAC reservations are higher priority than Option82:
     let reservation = match reservations
-        .by_mac(&mac_addr)
+        .by_mac(mac_addr)
         .or(relay.and_then(|relay_info| {
             get_reservation_by_relay_information(
                 reservations,
@@ -170,7 +170,7 @@ fn handle_request(
 
     // MAC reservations are higher priority than Option82:
     let reservation = match reservations
-        .by_mac(&mac_addr)
+        .by_mac(mac_addr)
         .or(relay.and_then(|relay_info| {
             get_reservation_by_relay_information(
                 reservations,

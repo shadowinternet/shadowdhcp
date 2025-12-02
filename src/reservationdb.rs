@@ -1,120 +1,16 @@
-use std::{
-    borrow::Borrow,
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::{hash::Hash, sync::Arc};
 
 use advmac::MacAddr6;
 use dashmap::DashMap;
 
 use crate::{Duid, Option1837, Option82, Reservation};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum ReservationKey {
     Mac(MacAddr6),
     Duid(Duid),
     Opt82(Option82),
     Opt1837(Option1837),
-}
-
-/* ---------- Hash/Eq for the owned key ----------------------------------- */
-/* IMPORTANT: for each variant we hash ONLY the payload,                     */
-/*           so that the hash equals the hash of the borrowed key.           */
-impl Hash for ReservationKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            ReservationKey::Mac(m) => m.hash(state),
-            ReservationKey::Duid(d) => d.hash(state),
-            ReservationKey::Opt82(o) => o.hash(state),
-            ReservationKey::Opt1837(o) => o.hash(state),
-        }
-    }
-}
-
-// Impl Borrow for ReservationKey for DashMap lookups
-
-impl Borrow<MacAddr6> for ReservationKey {
-    fn borrow(&self) -> &MacAddr6 {
-        match self {
-            ReservationKey::Mac(ref m) => m,
-            _ => panic!("called borrow::<MacAddr6> on non-Mac key"),
-        }
-    }
-}
-
-impl Borrow<Duid> for ReservationKey {
-    fn borrow(&self) -> &Duid {
-        match self {
-            ReservationKey::Duid(ref d) => d,
-            _ => panic!("called borrow::<Duid> on non-Duid key"),
-        }
-    }
-}
-
-impl Borrow<Option82> for ReservationKey {
-    fn borrow(&self) -> &Option82 {
-        match self {
-            ReservationKey::Opt82(ref o) => o,
-            _ => panic!("called borrow::<Option82> on non-Opt82 key"),
-        }
-    }
-}
-
-impl Borrow<Option1837> for ReservationKey {
-    fn borrow(&self) -> &Option1837 {
-        match self {
-            ReservationKey::Opt1837(ref o) => o,
-            _ => panic!("called borrow::<Option1837> on non-Opt1837 key"),
-        }
-    }
-}
-
-/* ---------- Equality between owned and borrowed keys -------------------- */
-/* DashMap uses the == operator between &K and &Q, so we implement the      */
-/* obvious comparisons by hand.                                             */
-
-impl PartialEq<MacAddr6> for ReservationKey {
-    fn eq(&self, other: &MacAddr6) -> bool {
-        matches!(self, ReservationKey::Mac(m) if m == other)
-    }
-}
-impl PartialEq<ReservationKey> for MacAddr6 {
-    fn eq(&self, other: &ReservationKey) -> bool {
-        other == self
-    }
-}
-
-impl PartialEq<Duid> for ReservationKey {
-    fn eq(&self, other: &Duid) -> bool {
-        matches!(self, ReservationKey::Duid(d) if d == other)
-    }
-}
-impl PartialEq<ReservationKey> for Duid {
-    fn eq(&self, other: &ReservationKey) -> bool {
-        other == self
-    }
-}
-
-impl PartialEq<Option82> for ReservationKey {
-    fn eq(&self, other: &Option82) -> bool {
-        matches!(self, ReservationKey::Opt82(o) if o == other)
-    }
-}
-impl PartialEq<ReservationKey> for Option82 {
-    fn eq(&self, other: &ReservationKey) -> bool {
-        other == self
-    }
-}
-
-impl PartialEq<Option1837> for ReservationKey {
-    fn eq(&self, other: &Option1837) -> bool {
-        matches!(self, ReservationKey::Opt1837(o) if o == other)
-    }
-}
-impl PartialEq<ReservationKey> for Option1837 {
-    fn eq(&self, other: &ReservationKey) -> bool {
-        other == self
-    }
 }
 
 pub struct ReservationDb {
@@ -157,20 +53,28 @@ impl ReservationDb {
         }
     }
 
-    pub fn by_mac(&self, mac: &MacAddr6) -> Option<Arc<Reservation>> {
-        self.inner.get(mac).map(|r| Arc::clone(r.value()))
+    pub fn by_mac(&self, mac: MacAddr6) -> Option<Arc<Reservation>> {
+        self.inner
+            .get(&ReservationKey::Mac(mac))
+            .map(|r| Arc::clone(r.value()))
     }
 
     pub fn by_duid(&self, duid: &Duid) -> Option<Arc<Reservation>> {
-        self.inner.get(duid).map(|r| Arc::clone(r.value()))
+        self.inner
+            .get(&ReservationKey::Duid(duid.clone()))
+            .map(|r| Arc::clone(r.value()))
     }
 
     pub fn by_opt82(&self, opt: &Option82) -> Option<Arc<Reservation>> {
-        self.inner.get(opt).map(|r| Arc::clone(r.value()))
+        self.inner
+            .get(&ReservationKey::Opt82(opt.clone()))
+            .map(|r| Arc::clone(r.value()))
     }
 
     pub fn by_opt1837(&self, opt: &Option1837) -> Option<Arc<Reservation>> {
-        self.inner.get(opt).map(|r| Arc::clone(r.value()))
+        self.inner
+            .get(&ReservationKey::Opt1837(opt.clone()))
+            .map(|r| Arc::clone(r.value()))
     }
 }
 
@@ -181,16 +85,6 @@ mod tests {
     use super::*;
     use advmac::MacAddr6;
     use dashmap::DashMap;
-
-    #[test]
-    fn test_mac_borrow() {
-        let key = ReservationKey::Mac(MacAddr6::new([0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E]));
-        let borrowed: &MacAddr6 = key.borrow();
-        assert_eq!(
-            borrowed,
-            &MacAddr6::new([0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E])
-        );
-    }
 
     #[test]
     fn test_map_lookups() {
@@ -209,9 +103,22 @@ mod tests {
         };
         map.insert(ReservationKey::Opt82(opt82.clone()), "charlie");
 
-        assert_eq!(*map.get(&mac).unwrap().value(), "alice");
-        assert_eq!(*map.get(&duid).unwrap().value(), "bob");
-        assert_eq!(*map.get(&opt82).unwrap().value(), "charlie");
+        assert_eq!(
+            *map.get(&ReservationKey::Mac(mac.clone())).unwrap().value(),
+            "alice"
+        );
+        assert_eq!(
+            *map.get(&ReservationKey::Duid(duid.clone()))
+                .unwrap()
+                .value(),
+            "bob"
+        );
+        assert_eq!(
+            *map.get(&ReservationKey::Opt82(opt82.clone()))
+                .unwrap()
+                .value(),
+            "charlie"
+        );
     }
 
     #[test]
@@ -251,7 +158,7 @@ mod tests {
         db.load_reservations(reservations);
 
         assert_eq!(
-            db.by_mac(&MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]))
+            db.by_mac(MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]))
                 .unwrap()
                 .ipv4,
             Ipv4Addr::new(192, 168, 1, 109)

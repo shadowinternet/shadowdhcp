@@ -26,7 +26,7 @@ pub fn find_reservation<'r>(
         })
         .or_else(|| {
             relay_msg.hw_addr().and_then(|mac| {
-                reservations.by_mac(&mac).or_else(|| {
+                reservations.by_mac(mac).or_else(|| {
                     leases
                         .get_opt82_by_mac(&mac)
                         .and_then(|opt82| reservations.by_opt82(&opt82))

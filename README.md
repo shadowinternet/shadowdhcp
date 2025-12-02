@@ -111,3 +111,9 @@ Then convert to a pcap with:
 ```
 text2pcap -u 546,547 packets.txt packets.pcap
 ```
+
+Windows:
+
+```
+& "C:\Program Files\Wireshark\text2pcap.exe" packets.txt packets.pcap
+```

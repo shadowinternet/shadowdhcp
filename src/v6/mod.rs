@@ -269,7 +269,6 @@ mod tests {
         };
         let mac = MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
         leases.insert_mac_option82_binding(&mac, &opt82);
-        let link_local_addr = mac.to_link_local_ipv6();
 
         let duid = vec![0x00, 0x01];
         let mut msg = Message::new(MessageType::Solicit);
@@ -293,7 +292,7 @@ mod tests {
         relay_opts.insert(DhcpOption::RelayMsg(RelayMessageData::Message(msg.clone())));
         relay_opts.insert(DhcpOption::ClientLinklayerAddress(ClientLinklayerAddress {
             address_type: 1,
-            address: link_local_addr.octets().to_vec(),
+            address: mac.to_array().to_vec(),
         }));
 
         let relay_msg = RelayMessage {
