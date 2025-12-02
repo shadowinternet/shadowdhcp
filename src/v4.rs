@@ -349,7 +349,7 @@ pub fn v4_worker(
                 {
                     let write_buf = response_msg.to_vec().expect("encoding response message");
                     match socket.send_to(&write_buf, src) {
-                        Ok(sent) => debug!("responded with {sent} bytes"),
+                        Ok(sent) => debug!("responded to {src} with {sent} bytes"),
                         Err(e) => error!("Problem sending response message: {e}"),
                     }
                 }

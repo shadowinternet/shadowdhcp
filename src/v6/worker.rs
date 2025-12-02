@@ -106,7 +106,7 @@ pub fn v6_worker(
 
                     let write_buf = relay_msg.to_vec().expect("encoding response msg");
                     match socket.send_to(&write_buf, src) {
-                        Ok(sent) => debug!("responded with {sent} bytes"),
+                        Ok(sent) => debug!("responded to {src} with {sent} bytes"),
                         Err(e) => error!("Problem sending respones message: {e}"),
                     }
                 }
