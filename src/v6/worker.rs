@@ -61,6 +61,7 @@ pub fn v6_worker(
         };
         match v6::RelayMessage::from_bytes(&read_buf[..amount]) {
             Ok(msg) => {
+                trace!("RelayMessage: {:#?}", msg);
                 // get the inner msg from the option
                 let inner_msg = match msg.opts().iter().find_map(|opt| match opt {
                     DhcpOption::RelayMsg(msg) => Some(msg.clone()),
