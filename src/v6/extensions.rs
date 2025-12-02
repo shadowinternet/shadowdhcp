@@ -5,6 +5,7 @@ use compact_str::CompactString;
 use dhcproto::v6::{DhcpOption, Message, RelayMessage, IANA, IAPD};
 use ipnet::Ipv6Net;
 use shadow_dhcpv6::Option1837;
+use tracing::debug;
 
 /// Helpers for interacting with dhcproto::v6::Message
 pub trait ShadowMessageExtV6 {
@@ -119,11 +120,14 @@ impl ShadowRelayMessageExtV6 for RelayMessage {
     /// TODO: return multiple possible link layer addresses
     fn hw_addr(&self) -> Option<MacAddr6> {
         self.opts().iter().find_map(|opt| match opt {
-            DhcpOption::ClientLinklayerAddress(ll) if ll.address.len() == 16 => {
-                let mut bytes: [u8; 16] = [0; 16];
-                bytes.copy_from_slice(&ll.address[0..16]);
-                let link_local_addr = Ipv6Addr::from(bytes);
-                MacAddr6::try_from_link_local_ipv6(link_local_addr).ok()
+            DhcpOption::ClientLinklayerAddress(ll) if ll.address.len() == 6 => {
+                let mut bytes: [u8; 6] = [0; 6];
+                bytes.copy_from_slice(&ll.address[0..6]);
+                Some(MacAddr6::new(bytes))
+            }
+            DhcpOption::ClientLinklayerAddress(ll) => {
+                debug!("Relay ClientLinkLayerAddress wasn't 6 bytes: {:?}", ll);
+                None
             }
             _ => None,
         })

@@ -1,0 +1,132 @@
+2025-12-02T04:19:52.622787Z TRACE v6worker server::v6::worker: RelayMessage: RelayMessage {
+    msg_type: RelayForw,
+    hop_count: 0,
+    link_addr: ::,
+    peer_addr: fe80::eea:14ff:fe4e:78bd,
+    opts: DhcpOptions(
+        [
+            RelayMsg(
+                Message(
+                    Message {
+                        msg_type: Solicit,
+                        xid: [
+                            248,
+                            96,
+                            230,
+                        ],
+                        opts: DhcpOptions(
+                            [
+                                ClientId(
+                                    [
+                                        0,
+                                        3,
+                                        0,
+                                        1,
+                                        12,
+                                        234,
+                                        20,
+                                        78,
+                                        120,
+                                        189,
+                                    ],
+                                ),
+                                IANA(
+                                    IANA {
+                                        id: 1,
+                                        t1: 0,
+                                        t2: 0,
+                                        opts: DhcpOptions(
+                                            [],
+                                        ),
+                                    },
+                                ),
+                                ORO(
+                                    ORO {
+                                        opts: [
+                                            SipServerD,
+                                            SipServerA,
+                                            DomainNameServers,
+                                            DomainSearchList,
+                                            SntpServers,
+                                            NtpServer,
+                                            AftrName,
+                                            PdExclude,
+                                            SolMaxRt,
+                                        ],
+                                    },
+                                ),
+                                ElapsedTime(
+                                    65500,
+                                ),
+                                ReconfAccept,
+                                IAPD(
+                                    IAPD {
+                                        id: 1,
+                                        t1: 0,
+                                        t2: 0,
+                                        opts: DhcpOptions(
+                                            [],
+                                        ),
+                                    },
+                                ),
+                                Unknown(
+                                    UnknownOption {
+                                        code: 39,
+                                        data: [
+                                            0,
+                                            22,
+                                            68,
+                                            65,
+                                            66,
+                                            83,
+                                            45,
+                                            68,
+                                            114,
+                                            101,
+                                            97,
+                                            109,
+                                            45,
+                                            77,
+                                            97,
+                                            99,
+                                            104,
+                                            105,
+                                            110,
+                                            101,
+                                            45,
+                                            80,
+                                            114,
+                                            111,
+                                            0,
+                                        ],
+                                    },
+                                ),
+                            ],
+                        ),
+                    },
+                ),
+            ),
+            InterfaceId(
+                [
+                    0,
+                    0,
+                    0,
+                    23,
+                ],
+            ),
+            ClientLinklayerAddress(
+                ClientLinklayerAddress {
+                    address_type: 1,
+                    address: [
+                        14,
+                        234,
+                        20,
+                        78,
+                        120,
+                        189,
+                    ],
+                },
+            ),
+        ],
+    ),
+}
