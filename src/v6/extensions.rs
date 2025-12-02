@@ -118,6 +118,7 @@ impl ShadowRelayMessageExtV6 for RelayMessage {
     /// <https://datatracker.ietf.org/doc/html/rfc6939#section-4>
     /// TODO: add fallbacks for other methods to get the link layer address
     /// TODO: return multiple possible link layer addresses
+    /// RelayMsg: ClientLinklayerAddres, RelayMsg: peer_addr, Msg: DUID
     fn hw_addr(&self) -> Option<MacAddr6> {
         self.opts().iter().find_map(|opt| match opt {
             DhcpOption::ClientLinklayerAddress(ll) if ll.address.len() == 6 => {
