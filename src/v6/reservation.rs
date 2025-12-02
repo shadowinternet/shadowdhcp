@@ -3,7 +3,6 @@ use std::sync::Arc;
 use dhcproto::v6::RelayMessage;
 use shadow_dhcpv6::{leasedb::LeaseDb, reservationdb::ReservationDb};
 use shadow_dhcpv6::{Duid, Reservation};
-use tracing::debug;
 
 use crate::v6::extensions::ShadowRelayMessageExtV6;
 
@@ -27,7 +26,6 @@ pub fn find_reservation<'r>(
         })
         .or_else(|| {
             relay_msg.hw_addr().and_then(|mac| {
-                debug!("Looking up {} in reservations", mac);
                 reservations.by_mac(mac).or_else(|| {
                     leases
                         .get_opt82_by_mac(&mac)

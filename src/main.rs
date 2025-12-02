@@ -47,7 +47,7 @@ fn main() {
         return;
     }
 
-    let config = match Config::load_from_files(config_dir) {
+    let config = match Config::load_from_files(&config_dir) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Unable to a load config file: {e}\nCheck the file exists, or set the `--configdir` parameter to the folder containing the `config.json` and `ids.json` files.");
@@ -56,16 +56,10 @@ fn main() {
     };
     let config = Arc::new(ArcSwap::from_pointee(config));
 
-    // TODO: load initial reservations file from config_dir
     let reservations: Vec<Reservation> =
-        serde_json::from_reader(std::fs::File::open("reservations.json").unwrap()).unwrap();
-
+        serde_json::from_reader(std::fs::File::open(config_dir.join("reservations.json")).unwrap())
+            .unwrap();
     tracing::info!("Loaded {} reservations", reservations.len());
-    for r in reservations.iter() {
-        if let Some(m) = r.mac {
-            tracing::trace!("{} reservation found", m);
-        }
-    }
 
     let db = ReservationDb::new();
     db.load_reservations(reservations);
