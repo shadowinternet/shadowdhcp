@@ -7,13 +7,14 @@ use std::{
 use advmac::MacAddr6;
 use dashmap::DashMap;
 
-use crate::{Duid, Option82, Reservation};
+use crate::{Duid, Option1837, Option82, Reservation};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReservationKey {
     Mac(MacAddr6),
     Duid(Duid),
     Opt82(Option82),
+    Opt1837(Option1837),
 }
 
 /* ---------- Hash/Eq for the owned key ----------------------------------- */
@@ -25,6 +26,7 @@ impl Hash for ReservationKey {
             ReservationKey::Mac(m) => m.hash(state),
             ReservationKey::Duid(d) => d.hash(state),
             ReservationKey::Opt82(o) => o.hash(state),
+            ReservationKey::Opt1837(o) => o.hash(state),
         }
     }
 }
@@ -54,6 +56,15 @@ impl Borrow<Option82> for ReservationKey {
         match self {
             ReservationKey::Opt82(ref o) => o,
             _ => panic!("called borrow::<Option82> on non-Opt82 key"),
+        }
+    }
+}
+
+impl Borrow<Option1837> for ReservationKey {
+    fn borrow(&self) -> &Option1837 {
+        match self {
+            ReservationKey::Opt1837(ref o) => o,
+            _ => panic!("called borrow::<Option1837> on non-Opt1837 key"),
         }
     }
 }
@@ -95,6 +106,17 @@ impl PartialEq<ReservationKey> for Option82 {
     }
 }
 
+impl PartialEq<Option1837> for ReservationKey {
+    fn eq(&self, other: &Option1837) -> bool {
+        matches!(self, ReservationKey::Opt1837(o) if o == other)
+    }
+}
+impl PartialEq<ReservationKey> for Option1837 {
+    fn eq(&self, other: &ReservationKey) -> bool {
+        other == self
+    }
+}
+
 pub struct ReservationDb {
     inner: DashMap<ReservationKey, Arc<Reservation>>,
 }
@@ -122,6 +144,11 @@ impl ReservationDb {
             self.inner
                 .insert(ReservationKey::Opt82(opt82.clone()), stored.clone());
         }
+
+        if let Some(ref opt1837) = stored.option1837 {
+            self.inner
+                .insert(ReservationKey::Opt1837(opt1837.clone()), stored.clone());
+        }
     }
 
     pub fn load_reservations(&self, reservations: Vec<Reservation>) {
@@ -139,6 +166,10 @@ impl ReservationDb {
     }
 
     pub fn by_opt82(&self, opt: &Option82) -> Option<Arc<Reservation>> {
+        self.inner.get(opt).map(|r| Arc::clone(r.value()))
+    }
+
+    pub fn by_opt1837(&self, opt: &Option1837) -> Option<Arc<Reservation>> {
         self.inner.get(opt).map(|r| Arc::clone(r.value()))
     }
 }

@@ -59,7 +59,7 @@ Reservations with multiple sources will be evaluated in the following order:
 
 IPv4: mac -> option82
 
-IPv6: duid -> mac -> option82
+IPv6: duid -> option 18 / option 37 -> mac -> option82
 
 `reservations.json`:
 ```json

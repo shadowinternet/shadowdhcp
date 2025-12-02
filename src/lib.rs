@@ -30,6 +30,8 @@ pub struct Reservation {
     pub duid: Option<Duid>,
     // option82 info used if mac is not specified
     pub option82: Option<Option82>,
+    // option1837 contains dhcpv6 option 18 and option 37, the v6 equivalent to option 82
+    pub option1837: Option<Option1837>,
 }
 
 impl Reservation {
@@ -41,34 +43,12 @@ impl Reservation {
             .as_ref()
             .map(|opt| V4Key::Option82(opt.clone())))
     }
-
-    /// Get the V6 key used for the reservation with the following order precedence
-    /// DUID, MAC Address.
-    /// In the case of Option82, the V6 Reservation will be dynamically generated
-    pub fn v6_key(&self) -> Option<V6Key> {
-        self.duid
-            .as_ref()
-            .map(|d| V6Key::Duid(d.clone()))
-            .or(self.mac.map(V6Key::Mac))
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum V4Key {
     Mac(MacAddr6),
     Option82(Option82),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum V6Key {
-    Duid(Duid),
-    Mac(MacAddr6),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct V6Ip {
-    pub ia_na: Ipv6Addr,
-    pub ia_pd: Ipv6Net,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,6 +80,16 @@ pub struct Option82 {
     pub circuit: Option<CompactString>,
     pub remote: Option<CompactString>,
     pub subscriber: Option<CompactString>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
+pub struct Option1837 {
+    /// Option 18 Interface-ID field
+    pub interface: Option<CompactString>,
+    /// Option 37 remote-id field
+    pub remote: Option<CompactString>,
+    /// Option 37 enterprise-number field
+    pub enterprise_number: Option<u32>,
 }
 
 // TODO: limit length of bytes

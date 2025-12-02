@@ -1,0 +1,386 @@
+use std::time::{Duration, Instant};
+
+use dhcproto::v6::{
+    DhcpOption, DhcpOptions, IAAddr, IAPrefix, Message, MessageType, RelayMessage, IANA, IAPD,
+};
+use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, LeaseV6};
+use tracing::{debug, error, field, info, instrument, Span};
+
+use crate::v6::{
+    extensions::{ShadowMessageExtV6, ShadowRelayMessageExtV6},
+    reservation::find_reservation,
+    PREFERRED_LIFETIME, VALID_LIFETIME,
+};
+
+#[instrument(skip(config, reservations, leases, msg, relay_msg),
+fields(client_id = field::Empty, xid = ?msg.xid()))]
+fn handle_solicit(
+    config: &Config,
+    reservations: &ReservationDb,
+    leases: &LeaseDb,
+    msg: Message,
+    relay_msg: &RelayMessage,
+) -> Option<Message> {
+    // Servers MUST discard any Solicit messages that do not include a Client identifier
+    // option or that do include a Server Identifier option
+    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    Span::current().record("client_id", field::display(&client_id.to_colon_string()));
+    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
+
+    if msg.server_id().is_some() {
+        info!("Client included a server_id field, ignoring");
+        return None;
+    }
+
+    // Rapid Commit option - The client may request the expedited two-message exchange
+    // by adding the Rapid Commit option to the first Solicit request
+    let msg_type = if msg.rapid_commit() {
+        debug!("Solicit 2 message exchange, rapid commit");
+        MessageType::Reply
+    } else {
+        debug!("Solicit 4 message exchange");
+        MessageType::Advertise
+    };
+
+    let reserved_address = find_reservation(reservations, leases, relay_msg, &client_id);
+    match reserved_address {
+        Some(reservation) => {
+            let lease = LeaseV6 {
+                first_leased: Instant::now(),
+                last_leased: Instant::now(),
+                valid: Duration::from_secs(u64::from(VALID_LIFETIME)),
+                duid: client_id.clone(),
+                mac: None,
+            };
+
+            leases.leased_new_v6(&reservation, lease);
+
+            let mut reply = Message::new_with_id(msg_type, msg.xid());
+            let opts = reply.opts_mut();
+
+            if matches!(msg_type, MessageType::Reply) {
+                // client requested rapid commit
+                // https://datatracker.ietf.org/doc/html/rfc8415#section-21.14
+                opts.insert(DhcpOption::RapidCommit)
+            }
+
+            // Reply contains IA_NA address and IA_PD prefix as options.
+            // These options contain nested options with the actual addresses/prefixes
+            // ReplyOptions [IAPD[IAPrefix], IANA[IAAddr]]
+
+            // construct IA_PD information
+            if msg.ia_pd().is_some() {
+                let mut ia_pd_opts = DhcpOptions::new();
+                ia_pd_opts.insert(DhcpOption::IAPrefix(IAPrefix {
+                    preferred_lifetime: PREFERRED_LIFETIME,
+                    valid_lifetime: VALID_LIFETIME,
+                    prefix_len: reservation.ipv6_pd.prefix_len(),
+                    prefix_ip: reservation.ipv6_pd.addr(),
+                    opts: DhcpOptions::new(),
+                }));
+                // add IA_PD information to Reply message
+                opts.insert(DhcpOption::IAPD(IAPD {
+                    id: 1,
+                    t1: PREFERRED_LIFETIME,
+                    t2: VALID_LIFETIME,
+                    opts: ia_pd_opts,
+                }));
+            }
+
+            // construct IA_NA information
+            if msg.ia_na().is_some() {
+                let mut ia_na_opts = DhcpOptions::new();
+                ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
+                    addr: reservation.ipv6_na,
+                    preferred_life: PREFERRED_LIFETIME,
+                    valid_life: VALID_LIFETIME,
+                    opts: DhcpOptions::new(),
+                }));
+                // add IA_NA information to Reply message
+                opts.insert(DhcpOption::IANA(IANA {
+                    id: 1,
+                    t1: PREFERRED_LIFETIME,
+                    t2: VALID_LIFETIME,
+                    opts: ia_na_opts,
+                }));
+            }
+
+            opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
+            opts.insert(DhcpOption::ClientId(client_id.bytes));
+            Some(reply)
+        }
+        None => {
+            info!("Solicit request with no reservation for DUID");
+            None
+        }
+    }
+}
+
+#[instrument(skip(config, reservations, leases, msg, relay_msg),
+fields(client_id = field::Empty, xid = ?msg.xid()))]
+fn handle_renew(
+    config: &Config,
+    reservations: &ReservationDb,
+    leases: &LeaseDb,
+    msg: Message,
+    relay_msg: &RelayMessage,
+) -> Option<Message> {
+    // client is refreshing existing lease, check that the addresses/prefixes sent
+    // by the client are the ones we have reserved for them
+
+    // message MUST include a ClientIdentifier option
+    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    Span::current().record("client_id", field::display(&client_id.to_colon_string()));
+    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
+
+    // message MUST include ServerIdentifier option AND match this Server's identity
+    if msg.server_id()? != config.v6_server_id.bytes {
+        error!("Client sent server_identifier that doesn't match this server");
+        return None;
+    }
+
+    let mut reply = Message::new_with_id(MessageType::Reply, msg.xid());
+    let opts = reply.opts_mut();
+
+    let reserved_address = find_reservation(reservations, leases, relay_msg, &client_id);
+    match reserved_address {
+        Some(reservation) => {
+            // check if our server reservation matches what the client sent
+            if msg.opts().iter().any(|o| match o {
+                DhcpOption::IANA(iana) => iana.opts.iter().any(|io| match io {
+                    DhcpOption::IAAddr(addr) => reservation.ipv6_na == addr.addr,
+                    _ => false,
+                }),
+                _ => false,
+            }) {
+                let mut ia_na_opts = DhcpOptions::new();
+                ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
+                    addr: reservation.ipv6_na,
+                    preferred_life: PREFERRED_LIFETIME,
+                    valid_life: VALID_LIFETIME,
+                    opts: DhcpOptions::new(),
+                }));
+                // add IA_NA information to Reply message
+                opts.insert(DhcpOption::IANA(IANA {
+                    id: 1, // TODO: match id of incoming msg
+                    t1: PREFERRED_LIFETIME,
+                    t2: VALID_LIFETIME,
+                    opts: ia_na_opts,
+                }));
+            }
+
+            if msg.opts().iter().any(|o| match o {
+                DhcpOption::IAPD(iapd) => iapd.opts.iter().any(|io| match io {
+                    DhcpOption::IAPrefix(prefix) => {
+                        reservation.ipv6_pd.addr() == prefix.prefix_ip
+                            && reservation.ipv6_pd.prefix_len() == prefix.prefix_len
+                    }
+                    _ => false,
+                }),
+                _ => false,
+            }) {
+                let mut ia_pd_opts = DhcpOptions::new();
+                ia_pd_opts.insert(DhcpOption::IAPrefix(IAPrefix {
+                    preferred_lifetime: PREFERRED_LIFETIME,
+                    valid_lifetime: VALID_LIFETIME,
+                    prefix_len: reservation.ipv6_pd.prefix_len(),
+                    prefix_ip: reservation.ipv6_pd.addr(),
+                    opts: DhcpOptions::new(),
+                }));
+                // add IA_PD information to Reply message
+                opts.insert(DhcpOption::IAPD(IAPD {
+                    id: 1,
+                    t1: PREFERRED_LIFETIME,
+                    t2: VALID_LIFETIME,
+                    opts: ia_pd_opts,
+                }));
+            }
+
+            // TODO: redo this
+            if opts.iter().count() > 0 {
+                let lease = LeaseV6 {
+                    first_leased: Instant::now(),
+                    last_leased: Instant::now(),
+                    valid: Duration::from_secs(u64::from(VALID_LIFETIME)),
+
+                    duid: client_id.clone(),
+                    mac: None,
+                };
+                leases.leased_new_v6(&reservation, lease);
+            }
+        }
+        None => {
+            // if the lease cannot be renewed, set the preferred and valid lifetimes to 0
+            // TODO: optionally include new addresses/prefixes that the client can use
+
+            for opt in msg.opts().iter() {
+                match opt {
+                    DhcpOption::IANA(iana) => {
+                        let mut iana_new = iana.clone();
+                        let addr: Option<&mut IAAddr> =
+                            iana_new.opts.iter_mut().find_map(|o| match o {
+                                DhcpOption::IAAddr(addr) => Some(addr),
+                                _ => None,
+                            });
+                        if let Some(a) = addr {
+                            a.valid_life = 0;
+                            a.preferred_life = 0;
+                        }
+
+                        opts.insert(DhcpOption::IANA(iana_new));
+                    }
+                    DhcpOption::IAPD(iapd) => {
+                        let mut iapd_new = iapd.clone();
+                        let prefix: Option<&mut IAPrefix> =
+                            iapd_new.opts.iter_mut().find_map(|o| match o {
+                                DhcpOption::IAPrefix(prefix) => Some(prefix),
+                                _ => None,
+                            });
+                        if let Some(p) = prefix {
+                            p.valid_lifetime = 0;
+                            p.preferred_lifetime = 0;
+                        }
+
+                        opts.insert(DhcpOption::IAPD(iapd_new));
+                    }
+                    _ => (),
+                }
+            }
+        }
+    };
+
+    opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
+    opts.insert(DhcpOption::ClientId(client_id.bytes));
+    Some(reply)
+}
+
+#[instrument(skip(config, reservations, leases, msg, relay_msg),
+fields(client_id = field::Empty, xid = ?msg.xid()))]
+fn handle_request(
+    config: &Config,
+    reservations: &ReservationDb,
+    leases: &LeaseDb,
+    msg: Message,
+    relay_msg: &RelayMessage,
+) -> Option<Message> {
+    // Servers MUST discard any Request messages that:
+    // * does not include a Client Identifier
+    // * does not include a Server Identifier option
+    // * includes a Server Identifier option that does not match this server's DUID
+    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    Span::current().record("client_id", field::display(&client_id.to_colon_string()));
+    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
+
+    if msg.server_id()? != config.v6_server_id.bytes {
+        error!("Client sent server_identifier that doesn't match this server");
+        return None;
+    }
+
+    let reserved_address = find_reservation(reservations, leases, relay_msg, &client_id);
+    match reserved_address {
+        Some(reservation) => {
+            let lease = LeaseV6 {
+                first_leased: Instant::now(),
+                last_leased: Instant::now(),
+                valid: Duration::from_secs(u64::from(VALID_LIFETIME)),
+                duid: client_id.clone(),
+                mac: None,
+            };
+
+            leases.leased_new_v6(&reservation, lease);
+
+            let mut reply = Message::new_with_id(MessageType::Reply, msg.xid());
+            let opts = reply.opts_mut();
+
+            // Reply contains IA_NA address and IA_PD prefix as options.
+            // These options contain nested options with the actual addresses/prefixes
+            // ReplyOptions [IAPD[IAPrefix], IANA[IAAddr]]
+
+            // construct IA_PD information
+            if msg.ia_pd().is_some() {
+                let mut ia_pd_opts = DhcpOptions::new();
+                ia_pd_opts.insert(DhcpOption::IAPrefix(IAPrefix {
+                    preferred_lifetime: PREFERRED_LIFETIME,
+                    valid_lifetime: VALID_LIFETIME,
+                    prefix_len: reservation.ipv6_pd.prefix_len(),
+                    prefix_ip: reservation.ipv6_pd.addr(),
+                    opts: DhcpOptions::new(),
+                }));
+                // add IA_PD information to Reply message
+                opts.insert(DhcpOption::IAPD(IAPD {
+                    id: 1,
+                    t1: PREFERRED_LIFETIME,
+                    t2: VALID_LIFETIME,
+                    opts: ia_pd_opts,
+                }));
+            }
+
+            // construct IA_NA information
+            if msg.ia_na().is_some() {
+                let mut ia_na_opts = DhcpOptions::new();
+                ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
+                    addr: reservation.ipv6_na,
+                    preferred_life: PREFERRED_LIFETIME,
+                    valid_life: VALID_LIFETIME,
+                    opts: DhcpOptions::new(),
+                }));
+                // add IA_NA information to Reply message
+                opts.insert(DhcpOption::IANA(IANA {
+                    id: 1,
+                    t1: PREFERRED_LIFETIME,
+                    t2: VALID_LIFETIME,
+                    opts: ia_na_opts,
+                }));
+            }
+
+            opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
+            opts.insert(DhcpOption::ClientId(client_id.bytes));
+            Some(reply)
+        }
+        None => {
+            info!("No reservation found");
+            None
+        }
+    }
+}
+
+pub fn handle_message(
+    config: &Config,
+    reservations: &ReservationDb,
+    leases: &LeaseDb,
+    msg: Message,
+    relay_msg: &RelayMessage,
+) -> Option<Message> {
+    match msg.msg_type() {
+        // A client sends a Solicit message to locate servers.
+        // https://datatracker.ietf.org/doc/html/rfc8415#section-16.2
+        // Four-message exchange - Solicit -> Advertisement -> Request -> Reply
+        // Two-message exchange (rapid commit) - Solicit -> Reply
+        MessageType::Solicit => handle_solicit(config, reservations, leases, msg, relay_msg),
+        // Servers always discard Advertise
+        MessageType::Advertise => None,
+        // A client sends a Request as part of the 4 message exchange to receive an initial address/prefix
+        // https://datatracker.ietf.org/doc/html/rfc8415#section-16.4
+        MessageType::Request => handle_request(config, reservations, leases, msg, relay_msg),
+        // 18.2.4.  Creation and Transmission of Renew Messages
+        //
+        //   To extend the preferred and valid lifetimes for the leases assigned
+        //   to the IAs and obtain new addresses or delegated prefixes for IAs,
+        //   the client sends a Renew message to the server from which the leases
+        //   were obtained; the Renew message includes IA options for the IAs
+        //   whose lease lifetimes are to be extended.  The client includes IA
+        //   Address options (see Section 21.6) within IA_NA (see Section 21.4)
+        //   and IA_TA (see Section 21.5) options for the addresses assigned to
+        //   the IAs.  The client includes IA Prefix options (see Section 21.22)
+        //   within IA_PD options (see Section 21.21) for the delegated prefixes
+        //   assigned to the IAs.
+        MessageType::Renew => handle_renew(config, reservations, leases, msg, relay_msg),
+        _ => {
+            error!(
+                "MessageType `{:?}` not implemented by ddhcpv6",
+                msg.msg_type()
+            );
+            None
+        }
+    }
+}

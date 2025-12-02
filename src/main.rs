@@ -37,12 +37,14 @@ fn main() {
         .expect("Parsing option --configdir")
         .unwrap_or_else(|| PathBuf::from("."));
 
-
     // Check for any remaining unused arguments
     let remaining = args.finish();
     if !remaining.is_empty() {
-        eprintln!("Unexpected arguments: {:?}\n Run `shadowdhcp --help` for usage", remaining);
-        return
+        eprintln!(
+            "Unexpected arguments: {:?}\n Run `shadowdhcp --help` for usage",
+            remaining
+        );
+        return;
     }
 
     let config = match Config::load_from_files(config_dir) {
