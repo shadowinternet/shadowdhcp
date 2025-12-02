@@ -6,7 +6,7 @@ use dhcproto::{
 };
 
 use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb};
-use std::{io, net::UdpSocket, sync::Arc};
+use std::{fmt::Write, io, net::UdpSocket, sync::Arc};
 use tracing::{debug, error, info, trace};
 
 pub fn v6_worker(
@@ -26,7 +26,7 @@ pub fn v6_worker(
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
                 debug!("Received {amount} bytes from {src:?}");
-                trace!("Data: {:x?}", &read_buf[..amount]);
+                trace!("Data: {}", hex_for_text2pcap(&read_buf[..amount]));
                 (amount, src)
             }
             Err(err) => {
@@ -115,4 +115,13 @@ pub fn v6_worker(
             }
         };
     }
+}
+
+fn hex_for_text2pcap(bytes: &[u8]) -> String {
+    let mut s = String::new();
+    s.push_str("0000 ");
+    for b in bytes {
+        write!(&mut s, " {:02x}", b).expect("writing to String");
+    }
+    s
 }
