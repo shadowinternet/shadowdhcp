@@ -3,8 +3,8 @@ pub mod handlers;
 mod reservation;
 pub mod worker;
 
-const PREFERRED_LIFETIME: u32 = 120;
-const VALID_LIFETIME: u32 = 240;
+const PREFERRED_LIFETIME: u32 = 3600;
+const VALID_LIFETIME: u32 = 7200;
 
 pub use worker::v6_worker;
 
@@ -236,6 +236,7 @@ mod tests {
             subnets_v4,
             v6_server_id,
             option82_extractors: extractors::get_all_extractors().into_values().collect(),
+            log_level: tracing::Level::DEBUG,
         }
     }
 

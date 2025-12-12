@@ -10,8 +10,6 @@ mod v4;
 mod v6;
 
 fn main() {
-    logging::init_stdout();
-
     let mut args = pico_args::Arguments::from_env();
     if args.contains(["-h", "--help"]) {
         print!("{}", HELP);
@@ -54,6 +52,7 @@ fn main() {
             return;
         }
     };
+    logging::init_stdout(config.log_level);
     let config = Arc::new(ArcSwap::from_pointee(config));
 
     let reservations: Vec<Reservation> =

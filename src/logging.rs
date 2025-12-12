@@ -1,15 +1,16 @@
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing::Level;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-pub fn init_stdout() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+pub fn init_stdout(max_level: Level) {
     tracing_subscriber::registry()
         .with(
             fmt::layer()
                 .with_writer(std::io::stdout)
                 .with_target(true)
-                //.with_thread_ids(true)
-                .with_thread_names(true), //.with_ansi(true)
+                .with_thread_names(true)
+                .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
+                    max_level,
+                )),
         )
-        .with(filter)
         .init();
 }

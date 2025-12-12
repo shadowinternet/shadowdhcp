@@ -5,7 +5,7 @@ use tracing::debug;
 use std::net::{Ipv6Addr, UdpSocket};
 
 fn main() {
-    logging::init_stdout();
+    logging::init_stdout(tracing::Level::DEBUG);
 
     let msg = dhcpv6_test_request().to_vec().expect("encoding test msg");
 

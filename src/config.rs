@@ -3,6 +3,7 @@ use std::{
     fmt,
     net::Ipv4Addr,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use crate::{
@@ -16,6 +17,7 @@ pub struct Config {
     pub subnets_v4: Vec<V4Subnet>,
     pub v6_server_id: Duid,
     pub option82_extractors: Vec<Option82ExtractorFn>,
+    pub log_level: tracing::Level,
 }
 
 /// Server wide configuration
@@ -24,6 +26,7 @@ struct ServerConfig {
     dns_v4: Vec<Ipv4Addr>,
     subnets_v4: Vec<V4Subnet>,
     option82_extractors: Vec<String>,
+    log_level: Option<String>,
 }
 
 /// Server IDs stored in separate file that may be auto generated in the future
@@ -44,6 +47,7 @@ pub enum ConfigError {
         err: std::io::Error,
         path: PathBuf,
     },
+    LogLevel(String),
 }
 
 trait PathContext<T> {
@@ -78,6 +82,10 @@ impl fmt::Display for ConfigError {
                 write!(f, "Parsing `{}`: {err}", path.to_string_lossy())
             }
             ConfigError::Io { err, path } => write!(f, "`{}`: {err}", path.to_string_lossy()),
+            ConfigError::LogLevel(value) => write!(
+                f,
+                r#"Unexpected log level {value}. Expected one of [trace, debug, info, warn, error]"#
+            ),
         }
     }
 }
@@ -109,12 +117,20 @@ impl Config {
             }
         }
 
+        let log_level = match server_config.log_level {
+            Some(s) if !s.is_empty() => {
+                tracing::Level::from_str(&s).map_err(|_| ConfigError::LogLevel(s))?
+            }
+            _ => tracing::Level::INFO,
+        };
+
         Ok(Config {
             dns_v4: server_config.dns_v4,
             v4_server_id: server_ids.v4,
             subnets_v4: server_config.subnets_v4,
             v6_server_id: server_ids.v6,
             option82_extractors,
+            log_level,
         })
     }
 }
