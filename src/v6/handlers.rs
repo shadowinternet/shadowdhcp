@@ -1,9 +1,14 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use dhcproto::v6::{
     DhcpOption, DhcpOptions, IAAddr, IAPrefix, Message, MessageType, RelayMessage, IANA, IAPD,
 };
-use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, LeaseV6};
+use shadow_dhcpv6::{
+    config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, LeaseV6, Reservation,
+};
 use tracing::{debug, error, field, info, instrument, Span};
 
 use crate::v6::{
@@ -11,6 +16,34 @@ use crate::v6::{
     reservation::find_reservation,
     PREFERRED_LIFETIME, VALID_LIFETIME,
 };
+
+/// A DHCPv6 response message produced by the server.
+///
+/// If a reservation was used to construct the message, it is included for logging
+/// and observability.
+pub struct ResponseMessage {
+    pub message: Message,
+    pub reservation: Option<Arc<Reservation>>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum NoResponseReason {
+    NoClientId,
+    UnexpectedServerId,
+    WrongServerId,
+    NoServerId,
+    NoReservation,
+    Discarded,
+}
+
+/// Result of processing an incoming DHCPv6 message.
+///
+/// `DhcpV6Response` indicates whether the server should send a DHCPv6
+/// message back to the client or intentionally remain silent.
+pub enum DhcpV6Response {
+    Message(ResponseMessage),
+    NoResponse(NoResponseReason),
+}
 
 #[instrument(skip(config, reservations, leases, msg, relay_msg),
 fields(client_id = field::Empty, xid = ?msg.xid()))]
@@ -20,16 +53,20 @@ fn handle_solicit(
     leases: &LeaseDb,
     msg: Message,
     relay_msg: &RelayMessage,
-) -> Option<Message> {
+) -> DhcpV6Response {
     // Servers MUST discard any Solicit messages that do not include a Client identifier
     // option or that do include a Server Identifier option
-    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    let client_id = match msg.client_id() {
+        Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
+        None => return DhcpV6Response::NoResponse(NoResponseReason::NoClientId),
+    };
+
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     if msg.server_id().is_some() {
         info!("Client included a server_id field, ignoring");
-        return None;
+        return DhcpV6Response::NoResponse(NoResponseReason::UnexpectedServerId);
     }
 
     // Rapid Commit option - The client may request the expedited two-message exchange
@@ -107,11 +144,14 @@ fn handle_solicit(
 
             opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
             opts.insert(DhcpOption::ClientId(client_id.bytes));
-            Some(reply)
+            DhcpV6Response::Message(ResponseMessage {
+                message: reply,
+                reservation: Some(reservation),
+            })
         }
         None => {
             info!("Solicit request with no reservation for DUID");
-            None
+            DhcpV6Response::NoResponse(NoResponseReason::NoReservation)
         }
     }
 }
@@ -124,19 +164,23 @@ fn handle_renew(
     leases: &LeaseDb,
     msg: Message,
     relay_msg: &RelayMessage,
-) -> Option<Message> {
+) -> DhcpV6Response {
     // client is refreshing existing lease, check that the addresses/prefixes sent
     // by the client are the ones we have reserved for them
 
     // message MUST include a ClientIdentifier option
-    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    let client_id = match msg.client_id() {
+        Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
+        None => return DhcpV6Response::NoResponse(NoResponseReason::NoClientId),
+    };
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     // message MUST include ServerIdentifier option AND match this Server's identity
-    if msg.server_id()? != config.v6_server_id.bytes {
-        error!("Client sent server_identifier that doesn't match this server");
-        return None;
+    match msg.server_id() {
+        Some(bytes) if bytes == config.v6_server_id.bytes => (),
+        Some(_) => return DhcpV6Response::NoResponse(NoResponseReason::WrongServerId),
+        None => return DhcpV6Response::NoResponse(NoResponseReason::NoServerId),
     }
 
     let mut reply = Message::new_with_id(MessageType::Reply, msg.xid());
@@ -144,7 +188,7 @@ fn handle_renew(
 
     let reserved_address = find_reservation(reservations, leases, relay_msg, &client_id);
     match reserved_address {
-        Some(reservation) => {
+        Some(ref reservation) => {
             // check if our server reservation matches what the client sent
             if msg.opts().iter().any(|o| match o {
                 DhcpOption::IANA(iana) => iana.opts.iter().any(|io| match io {
@@ -206,7 +250,7 @@ fn handle_renew(
                     duid: client_id.clone(),
                     mac: None,
                 };
-                leases.leased_new_v6(&reservation, lease);
+                leases.leased_new_v6(reservation, lease);
             }
         }
         None => {
@@ -251,7 +295,10 @@ fn handle_renew(
 
     opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
     opts.insert(DhcpOption::ClientId(client_id.bytes));
-    Some(reply)
+    DhcpV6Response::Message(ResponseMessage {
+        message: reply,
+        reservation: reserved_address,
+    })
 }
 
 #[instrument(skip(config, reservations, leases, msg, relay_msg),
@@ -262,18 +309,23 @@ fn handle_request(
     leases: &LeaseDb,
     msg: Message,
     relay_msg: &RelayMessage,
-) -> Option<Message> {
+) -> DhcpV6Response {
     // Servers MUST discard any Request messages that:
     // * does not include a Client Identifier
     // * does not include a Server Identifier option
     // * includes a Server Identifier option that does not match this server's DUID
-    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    let client_id = match msg.client_id() {
+        Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
+        None => return DhcpV6Response::NoResponse(NoResponseReason::NoClientId),
+    };
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
-    if msg.server_id()? != config.v6_server_id.bytes {
-        error!("Client sent server_identifier that doesn't match this server");
-        return None;
+    // message MUST include ServerIdentifier option AND match this Server's identity
+    match msg.server_id() {
+        Some(bytes) if bytes == config.v6_server_id.bytes => (),
+        Some(_) => return DhcpV6Response::NoResponse(NoResponseReason::WrongServerId),
+        None => return DhcpV6Response::NoResponse(NoResponseReason::NoServerId),
     }
 
     let reserved_address = find_reservation(reservations, leases, relay_msg, &client_id);
@@ -335,12 +387,12 @@ fn handle_request(
 
             opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
             opts.insert(DhcpOption::ClientId(client_id.bytes));
-            Some(reply)
+            DhcpV6Response::Message(ResponseMessage {
+                message: reply,
+                reservation: Some(reservation),
+            })
         }
-        None => {
-            info!("No reservation found");
-            None
-        }
+        None => DhcpV6Response::NoResponse(NoResponseReason::NoReservation),
     }
 }
 
@@ -350,7 +402,7 @@ pub fn handle_message(
     leases: &LeaseDb,
     msg: Message,
     relay_msg: &RelayMessage,
-) -> Option<Message> {
+) -> DhcpV6Response {
     match msg.msg_type() {
         // A client sends a Solicit message to locate servers.
         // https://datatracker.ietf.org/doc/html/rfc8415#section-16.2
@@ -358,7 +410,7 @@ pub fn handle_message(
         // Two-message exchange (rapid commit) - Solicit -> Reply
         MessageType::Solicit => handle_solicit(config, reservations, leases, msg, relay_msg),
         // Servers always discard Advertise
-        MessageType::Advertise => None,
+        MessageType::Advertise => DhcpV6Response::NoResponse(NoResponseReason::Discarded),
         // A client sends a Request as part of the 4 message exchange to receive an initial address/prefix
         // https://datatracker.ietf.org/doc/html/rfc8415#section-16.4
         MessageType::Request => handle_request(config, reservations, leases, msg, relay_msg),
@@ -380,7 +432,7 @@ pub fn handle_message(
                 "MessageType `{:?}` not implemented by ddhcpv6",
                 msg.msg_type()
             );
-            None
+            DhcpV6Response::NoResponse(NoResponseReason::Discarded)
         }
     }
 }

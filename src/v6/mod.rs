@@ -10,7 +10,10 @@ pub use worker::v6_worker;
 
 #[cfg(test)]
 mod tests {
-    use crate::{v6::extensions::ShadowMessageExtV6, Reservation};
+    use crate::{
+        v6::{extensions::ShadowMessageExtV6, handlers::DhcpV6Response},
+        Reservation,
+    };
     use advmac::MacAddr6;
     use dhcproto::{
         v6::{
@@ -304,9 +307,16 @@ mod tests {
             opts: relay_opts,
         };
 
-        let resp =
-            crate::v6::handlers::handle_message(&basic_config(), &db, &leases, msg, &relay_msg)
-                .unwrap();
+        let resp = match crate::v6::handlers::handle_message(
+            &basic_config(),
+            &db,
+            &leases,
+            msg,
+            &relay_msg,
+        ) {
+            DhcpV6Response::Message(resp) => resp.message,
+            _ => panic!("Expected message response"),
+        };
         assert!(matches!(resp.msg_type(), MessageType::Advertise));
 
         let reservation = db.by_opt82(&opt82).unwrap();

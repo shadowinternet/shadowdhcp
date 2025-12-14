@@ -9,6 +9,8 @@ use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::Reservation
 use std::{fmt::Write, io, net::UdpSocket, sync::Arc};
 use tracing::{debug, error, info, trace};
 
+use crate::v6::handlers::DhcpV6Response;
+
 pub fn v6_worker(
     reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
     leases: Arc<LeaseDb>,
@@ -74,40 +76,50 @@ pub fn v6_worker(
                     None => continue,
                 };
 
-                if let Some(response_msg) = crate::v6::handlers::handle_message(
+                match crate::v6::handlers::handle_message(
                     &config.load(),
                     &reservations.load(),
                     &leases,
                     inner_msg,
                     &msg,
                 ) {
-                    // wrap the message in a RelayRepl
-                    let mut relay_reply_opts = DhcpOptions::new();
-                    relay_reply_opts.insert(DhcpOption::RelayMsg(v6::RelayMessageData::Message(
-                        response_msg,
-                    )));
-
-                    // reply with InterfaceId if it was included in the original RelayForw message
-                    if let Some(interface_id) = msg
-                        .opts
-                        .iter()
-                        .find(|opt| matches!(opt, v6::DhcpOption::InterfaceId(_)))
-                    {
-                        relay_reply_opts.insert(interface_id.clone());
+                    DhcpV6Response::NoResponse(reason) => {
+                        debug!("Not responding {:?}", reason);
                     }
+                    DhcpV6Response::Message(resp) => {
+                        // TODO: handle analytics here
+                        resp.reservation.inspect(|res| {
+                            trace!("Responding to reservation for {:?}", res.ipv6_na)
+                        });
 
-                    let relay_msg = RelayMessage {
-                        msg_type: v6::MessageType::RelayRepl,
-                        hop_count: msg.hop_count(),
-                        link_addr: msg.link_addr(),
-                        peer_addr: msg.peer_addr(),
-                        opts: relay_reply_opts,
-                    };
+                        // wrap the message in a RelayRepl
+                        let mut relay_reply_opts = DhcpOptions::new();
+                        relay_reply_opts.insert(DhcpOption::RelayMsg(
+                            v6::RelayMessageData::Message(resp.message),
+                        ));
 
-                    let write_buf = relay_msg.to_vec().expect("encoding response msg");
-                    match socket.send_to(&write_buf, src) {
-                        Ok(sent) => debug!("responded to {src} with {sent} bytes"),
-                        Err(e) => error!("Problem sending respones message: {e}"),
+                        // reply with InterfaceId if it was included in the original RelayForw message
+                        if let Some(interface_id) = msg
+                            .opts
+                            .iter()
+                            .find(|opt| matches!(opt, v6::DhcpOption::InterfaceId(_)))
+                        {
+                            relay_reply_opts.insert(interface_id.clone());
+                        }
+
+                        let relay_msg = RelayMessage {
+                            msg_type: v6::MessageType::RelayRepl,
+                            hop_count: msg.hop_count(),
+                            link_addr: msg.link_addr(),
+                            peer_addr: msg.peer_addr(),
+                            opts: relay_reply_opts,
+                        };
+
+                        let write_buf = relay_msg.to_vec().expect("encoding response msg");
+                        match socket.send_to(&write_buf, src) {
+                            Ok(sent) => debug!("responded to {src} with {sent} bytes"),
+                            Err(e) => error!("Problem sending respones message: {e}"),
+                        }
                     }
                 }
             }
