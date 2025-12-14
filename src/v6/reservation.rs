@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use crate::{
+    leasedb::LeaseDb, reservationdb::ReservationDb, v6::extensions::ShadowRelayMessageExtV6, Duid,
+    Reservation,
+};
 use dhcproto::v6::RelayMessage;
-use shadow_dhcpv6::{leasedb::LeaseDb, reservationdb::ReservationDb};
-use shadow_dhcpv6::{Duid, Reservation};
-
-use crate::v6::extensions::ShadowRelayMessageExtV6;
 
 /// Attempt to find a reservation using different lookup priorities:
 ///

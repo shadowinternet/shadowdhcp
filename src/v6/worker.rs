@@ -5,7 +5,7 @@ use dhcproto::{
     Decodable, Encodable,
 };
 
-use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb};
+use crate::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb};
 use std::{fmt::Write, io, net::UdpSocket, sync::Arc};
 use tracing::{debug, error, info, trace};
 

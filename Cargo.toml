@@ -8,10 +8,6 @@ edition = "2021"
 default-run = "shadowdhcp"
 
 [[bin]]
-name = "client"
-path = "src/client.rs"
-
-[[bin]]
 name = "shadowdhcp"
 path = "src/main.rs"
 
@@ -28,6 +24,7 @@ panic = "abort"
 [dependencies]
 advmac = { version = "1.0.3", default-features = false, features = ["serde", "std"] }
 arc-swap = "1.7.1"
+clickhouse = { version = "0.14.1", features = ["inserter", "rustls-tls-ring", "rustls-tls-webpki-roots"] }
 compact_str = { version = "0.9.0", features = ["serde"] }
 dashmap = "6.1.0"
 dhcproto = { git = "https://github.com/nocduro/dhcproto.git" }
@@ -35,5 +32,7 @@ ipnet = { version = "2.5", features = ["serde"] }
 pico-args = "0.5.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros", "time"] }
+tower = "0.5.2"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["fmt", "std"] }

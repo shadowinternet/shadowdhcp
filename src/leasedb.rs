@@ -2,7 +2,7 @@ use advmac::MacAddr6;
 use dashmap::DashMap;
 use tracing::info;
 
-use crate::{LeaseV4, LeaseV6, Option82, Reservation};
+use crate::types::{LeaseV4, LeaseV6, Option82, Reservation};
 
 #[derive(Clone)]
 pub struct LeaseDb {

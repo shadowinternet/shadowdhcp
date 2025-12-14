@@ -10,6 +10,10 @@ pub use worker::v6_worker;
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        config::Config, extractors, leasedb::LeaseDb, reservationdb::ReservationDb, Duid, Option82,
+        V4Subnet,
+    };
     use crate::{v6::extensions::ShadowMessageExtV6, Reservation};
     use advmac::MacAddr6;
     use dhcproto::{
@@ -18,10 +22,6 @@ mod tests {
             RelayMessageData, IANA, IAPD,
         },
         Decodable,
-    };
-    use shadow_dhcpv6::{
-        config::Config, extractors, leasedb::LeaseDb, reservationdb::ReservationDb, Duid, Option82,
-        V4Subnet,
     };
     use std::net::{Ipv4Addr, Ipv6Addr};
 

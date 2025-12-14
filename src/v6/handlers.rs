@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
+use crate::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, LeaseV6};
 use dhcproto::v6::{
     DhcpOption, DhcpOptions, IAAddr, IAPrefix, Message, MessageType, RelayMessage, IANA, IAPD,
 };
-use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, LeaseV6};
 use tracing::{debug, error, field, info, instrument, Span};
 
 use crate::v6::{
@@ -23,7 +23,7 @@ fn handle_solicit(
 ) -> Option<Message> {
     // Servers MUST discard any Solicit messages that do not include a Client identifier
     // option or that do include a Server Identifier option
-    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    let client_id = crate::Duid::from(msg.client_id()?.to_vec());
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
@@ -129,7 +129,7 @@ fn handle_renew(
     // by the client are the ones we have reserved for them
 
     // message MUST include a ClientIdentifier option
-    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    let client_id = crate::Duid::from(msg.client_id()?.to_vec());
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
@@ -267,7 +267,7 @@ fn handle_request(
     // * does not include a Client Identifier
     // * does not include a Server Identifier option
     // * includes a Server Identifier option that does not match this server's DUID
-    let client_id = shadow_dhcpv6::Duid::from(msg.client_id()?.to_vec());
+    let client_id = crate::Duid::from(msg.client_id()?.to_vec());
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 

@@ -12,7 +12,7 @@ use std::{
 };
 use tracing::{debug, error, field, info, instrument, trace, warn, Span};
 
-use shadow_dhcpv6::{
+use crate::{
     config::Config, extractors::Option82ExtractorFn, leasedb::LeaseDb,
     reservationdb::ReservationDb, Option82, RelayAgentInformationExt, Reservation, V4Key,
 };

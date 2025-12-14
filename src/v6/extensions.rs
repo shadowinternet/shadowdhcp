@@ -4,8 +4,9 @@ use advmac::MacAddr6;
 use compact_str::CompactString;
 use dhcproto::v6::{DhcpOption, Message, RelayMessage, IANA, IAPD};
 use ipnet::Ipv6Net;
-use shadow_dhcpv6::Option1837;
 use tracing::debug;
+
+use crate::Option1837;
 
 /// Helpers for interacting with dhcproto::v6::Message
 pub trait ShadowMessageExtV6 {

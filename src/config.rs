@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     extractors::{self, Option82ExtractorFn},
-    Duid, V4Subnet,
+    types::{Duid, V4Subnet},
 };
 
 pub struct Config {
