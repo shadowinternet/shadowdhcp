@@ -240,6 +240,7 @@ mod tests {
             v6_server_id,
             option82_extractors: extractors::get_all_extractors().into_values().collect(),
             log_level: tracing::Level::DEBUG,
+            events_address: None,
         }
     }
 
@@ -311,7 +312,7 @@ mod tests {
             &basic_config(),
             &db,
             &leases,
-            msg,
+            &msg,
             &relay_msg,
         ) {
             DhcpV6Response::Message(resp) => resp.message,

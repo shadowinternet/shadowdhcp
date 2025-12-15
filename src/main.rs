@@ -1,4 +1,8 @@
-use std::{path::PathBuf, sync::Arc, thread};
+use std::{
+    path::PathBuf,
+    sync::{mpsc, Arc},
+    thread,
+};
 
 use arc_swap::ArcSwap;
 use shadow_dhcpv6::{
@@ -6,6 +10,9 @@ use shadow_dhcpv6::{
     Reservation,
 };
 
+use crate::analytics::events::DhcpEvent;
+
+mod analytics;
 mod v4;
 mod v6;
 
@@ -65,22 +72,37 @@ fn main() {
     let db = Arc::new(ArcSwap::from_pointee(db));
     let leases = Arc::new(LeaseDb::new());
 
+    let events_address = config.load().events_address;
+    let (tx, rx) = events_address
+        .as_ref()
+        .map(|_| mpsc::channel::<DhcpEvent>())
+        .unzip();
+
     thread::scope(|s| {
-        let v4db = db.clone();
-        let v4leases = leases.clone();
-        let v4config = config.clone();
-        let v6worker = thread::Builder::new()
-            .name("v6worker".to_string())
-            .spawn_scoped(s, || v6::v6_worker(db, leases, config))
-            .expect("v6worker spawn");
+        let (v4db, v4leases, v4config) = (db.clone(), leases.clone(), config.clone());
         let v4worker = thread::Builder::new()
             .name("v4worker".to_string())
-            .spawn_scoped(s, || v4::v4_worker(v4db, v4leases, v4config))
+            .spawn_scoped(s, move || v4::v4_worker(v4db, v4leases, v4config))
             .expect("v4worker spawn");
 
-        let _ = v6worker.join();
-        let _ = v4worker.join();
-    })
+        let v6worker = thread::Builder::new()
+            .name("v6worker".to_string())
+            .spawn_scoped(s, move || v6::v6_worker(db, leases, config, tx))
+            .expect("v6worker spawn");
+
+        let events_worker = events_address.zip(rx).map(|(addr, rx)| {
+            thread::Builder::new()
+                .name("events".to_string())
+                .spawn_scoped(s, move || analytics::writer::tcp_writer(addr, rx))
+                .expect("events spawn")
+        });
+
+        v4worker.join().expect("v4worker join");
+        v6worker.join().expect("v6worker join");
+        if let Some(handle) = events_worker {
+            handle.join().expect("events join");
+        }
+    });
 }
 
 const HELP: &str = "\

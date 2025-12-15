@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::{
     fmt,
-    net::Ipv4Addr,
+    net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -18,6 +18,7 @@ pub struct Config {
     pub v6_server_id: Duid,
     pub option82_extractors: Vec<Option82ExtractorFn>,
     pub log_level: tracing::Level,
+    pub events_address: Option<SocketAddr>,
 }
 
 /// Server wide configuration
@@ -27,6 +28,7 @@ struct ServerConfig {
     subnets_v4: Vec<V4Subnet>,
     option82_extractors: Vec<String>,
     log_level: Option<String>,
+    events_address: Option<SocketAddr>,
 }
 
 /// Server IDs stored in separate file that may be auto generated in the future
@@ -131,6 +133,7 @@ impl Config {
             v6_server_id: server_ids.v6,
             option82_extractors,
             log_level,
+            events_address: server_config.events_address,
         })
     }
 }

@@ -6,15 +6,24 @@ use dhcproto::{
 };
 
 use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb};
-use std::{fmt::Write, io, net::UdpSocket, sync::Arc};
+use std::{
+    fmt::Write,
+    io,
+    net::UdpSocket,
+    sync::{mpsc, Arc},
+};
 use tracing::{debug, error, info, trace};
 
-use crate::v6::handlers::DhcpV6Response;
+use crate::{
+    analytics::events::{DhcpEvent, DhcpEventV6},
+    v6::handlers::DhcpV6Response,
+};
 
 pub fn v6_worker(
     reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
     leases: Arc<LeaseDb>,
     config: Arc<ArcSwapAny<Arc<Config>>>,
+    event_channel: Option<mpsc::Sender<DhcpEvent>>,
 ) {
     // only work with relayed messages
     let bind_addr = std::env::var("SHADOW_DHCP6_BIND").unwrap_or("[::]:547".into());
@@ -80,17 +89,26 @@ pub fn v6_worker(
                     &config.load(),
                     &reservations.load(),
                     &leases,
-                    inner_msg,
+                    &inner_msg,
                     &msg,
                 ) {
                     DhcpV6Response::NoResponse(reason) => {
+                        if let Some(ref event_sender) = event_channel {
+                            let event = DhcpEventV6::failed(&inner_msg, &msg, reason.as_str());
+                            let _ = event_sender.send(DhcpEvent::V6(event));
+                        }
                         debug!("Not responding {:?}", reason);
                     }
                     DhcpV6Response::Message(resp) => {
-                        // TODO: handle analytics here
-                        resp.reservation.inspect(|res| {
-                            trace!("Responding to reservation for {:?}", res.ipv6_na)
-                        });
+                        if let Some(ref event_sender) = event_channel {
+                            let event = DhcpEventV6::success(
+                                &inner_msg,
+                                &msg,
+                                &resp.message,
+                                resp.reservation.as_deref(),
+                            );
+                            let _ = event_sender.send(DhcpEvent::V6(event));
+                        }
 
                         // wrap the message in a RelayRepl
                         let mut relay_reply_opts = DhcpOptions::new();

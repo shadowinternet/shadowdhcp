@@ -36,6 +36,19 @@ pub enum NoResponseReason {
     Discarded,
 }
 
+impl NoResponseReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NoResponseReason::NoClientId => "NoClientId",
+            NoResponseReason::UnexpectedServerId => "UnexpectedServerId",
+            NoResponseReason::WrongServerId => "WrongServerId",
+            NoResponseReason::NoServerId => "NoServerId",
+            NoResponseReason::NoReservation => "NoReservation",
+            NoResponseReason::Discarded => "Discarded",
+        }
+    }
+}
+
 /// Result of processing an incoming DHCPv6 message.
 ///
 /// `DhcpV6Response` indicates whether the server should send a DHCPv6
@@ -51,7 +64,7 @@ fn handle_solicit(
     config: &Config,
     reservations: &ReservationDb,
     leases: &LeaseDb,
-    msg: Message,
+    msg: &Message,
     relay_msg: &RelayMessage,
 ) -> DhcpV6Response {
     // Servers MUST discard any Solicit messages that do not include a Client identifier
@@ -162,7 +175,7 @@ fn handle_renew(
     config: &Config,
     reservations: &ReservationDb,
     leases: &LeaseDb,
-    msg: Message,
+    msg: &Message,
     relay_msg: &RelayMessage,
 ) -> DhcpV6Response {
     // client is refreshing existing lease, check that the addresses/prefixes sent
@@ -307,7 +320,7 @@ fn handle_request(
     config: &Config,
     reservations: &ReservationDb,
     leases: &LeaseDb,
-    msg: Message,
+    msg: &Message,
     relay_msg: &RelayMessage,
 ) -> DhcpV6Response {
     // Servers MUST discard any Request messages that:
@@ -400,7 +413,7 @@ pub fn handle_message(
     config: &Config,
     reservations: &ReservationDb,
     leases: &LeaseDb,
-    msg: Message,
+    msg: &Message,
     relay_msg: &RelayMessage,
 ) -> DhcpV6Response {
     match msg.msg_type() {
