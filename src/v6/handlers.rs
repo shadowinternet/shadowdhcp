@@ -119,7 +119,7 @@ fn handle_solicit(
             // ReplyOptions [IAPD[IAPrefix], IANA[IAAddr]]
 
             // construct IA_PD information
-            if msg.ia_pd().is_some() {
+            if let Some(iapd) = msg.ia_pd() {
                 let mut ia_pd_opts = DhcpOptions::new();
                 ia_pd_opts.insert(DhcpOption::IAPrefix(IAPrefix {
                     preferred_lifetime: PREFERRED_LIFETIME,
@@ -130,7 +130,7 @@ fn handle_solicit(
                 }));
                 // add IA_PD information to Reply message
                 opts.insert(DhcpOption::IAPD(IAPD {
-                    id: 1,
+                    id: iapd.id,
                     t1: PREFERRED_LIFETIME,
                     t2: VALID_LIFETIME,
                     opts: ia_pd_opts,
@@ -138,7 +138,7 @@ fn handle_solicit(
             }
 
             // construct IA_NA information
-            if msg.ia_na().is_some() {
+            if let Some(iana) = msg.ia_na() {
                 let mut ia_na_opts = DhcpOptions::new();
                 ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
                     addr: reservation.ipv6_na,
@@ -148,7 +148,7 @@ fn handle_solicit(
                 }));
                 // add IA_NA information to Reply message
                 opts.insert(DhcpOption::IANA(IANA {
-                    id: 1,
+                    id: iana.id,
                     t1: PREFERRED_LIFETIME,
                     t2: VALID_LIFETIME,
                     opts: ia_na_opts,
@@ -197,19 +197,14 @@ fn handle_renew(
     }
 
     let mut reply = Message::new_with_id(MessageType::Reply, msg.xid());
-    let opts = reply.opts_mut();
+    let reply_opts = reply.opts_mut();
 
     let reserved_address = find_reservation(reservations, leases, relay_msg, &client_id);
     match reserved_address {
         Some(ref reservation) => {
             // check if our server reservation matches what the client sent
-            if msg.opts().iter().any(|o| match o {
-                DhcpOption::IANA(iana) => iana.opts.iter().any(|io| match io {
-                    DhcpOption::IAAddr(addr) => reservation.ipv6_na == addr.addr,
-                    _ => false,
-                }),
-                _ => false,
-            }) {
+            // TODO: should this scan for multiple IANA options?
+            if let Some(iana) = msg.ia_na() {
                 let mut ia_na_opts = DhcpOptions::new();
                 ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
                     addr: reservation.ipv6_na,
@@ -218,24 +213,15 @@ fn handle_renew(
                     opts: DhcpOptions::new(),
                 }));
                 // add IA_NA information to Reply message
-                opts.insert(DhcpOption::IANA(IANA {
-                    id: 1, // TODO: match id of incoming msg
+                reply_opts.insert(DhcpOption::IANA(IANA {
+                    id: iana.id,
                     t1: PREFERRED_LIFETIME,
                     t2: VALID_LIFETIME,
                     opts: ia_na_opts,
                 }));
             }
 
-            if msg.opts().iter().any(|o| match o {
-                DhcpOption::IAPD(iapd) => iapd.opts.iter().any(|io| match io {
-                    DhcpOption::IAPrefix(prefix) => {
-                        reservation.ipv6_pd.addr() == prefix.prefix_ip
-                            && reservation.ipv6_pd.prefix_len() == prefix.prefix_len
-                    }
-                    _ => false,
-                }),
-                _ => false,
-            }) {
+            if let Some(iapd) = msg.ia_pd() {
                 let mut ia_pd_opts = DhcpOptions::new();
                 ia_pd_opts.insert(DhcpOption::IAPrefix(IAPrefix {
                     preferred_lifetime: PREFERRED_LIFETIME,
@@ -245,8 +231,8 @@ fn handle_renew(
                     opts: DhcpOptions::new(),
                 }));
                 // add IA_PD information to Reply message
-                opts.insert(DhcpOption::IAPD(IAPD {
-                    id: 1,
+                reply_opts.insert(DhcpOption::IAPD(IAPD {
+                    id: iapd.id,
                     t1: PREFERRED_LIFETIME,
                     t2: VALID_LIFETIME,
                     opts: ia_pd_opts,
@@ -254,7 +240,7 @@ fn handle_renew(
             }
 
             // TODO: redo this
-            if opts.iter().count() > 0 {
+            if reply_opts.iter().count() > 0 {
                 let lease = LeaseV6 {
                     first_leased: Instant::now(),
                     last_leased: Instant::now(),
@@ -269,7 +255,10 @@ fn handle_renew(
         None => {
             // if the lease cannot be renewed, set the preferred and valid lifetimes to 0
             // TODO: optionally include new addresses/prefixes that the client can use
-
+            reply_opts.insert(DhcpOption::StatusCode(dhcproto::v6::StatusCode {
+                status: dhcproto::v6::Status::NoBinding,
+                msg: "No binding".into(),
+            }));
             for opt in msg.opts().iter() {
                 match opt {
                     DhcpOption::IANA(iana) => {
@@ -284,7 +273,7 @@ fn handle_renew(
                             a.preferred_life = 0;
                         }
 
-                        opts.insert(DhcpOption::IANA(iana_new));
+                        reply_opts.insert(DhcpOption::IANA(iana_new));
                     }
                     DhcpOption::IAPD(iapd) => {
                         let mut iapd_new = iapd.clone();
@@ -298,7 +287,7 @@ fn handle_renew(
                             p.preferred_lifetime = 0;
                         }
 
-                        opts.insert(DhcpOption::IAPD(iapd_new));
+                        reply_opts.insert(DhcpOption::IAPD(iapd_new));
                     }
                     _ => (),
                 }
@@ -306,8 +295,8 @@ fn handle_renew(
         }
     };
 
-    opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
-    opts.insert(DhcpOption::ClientId(client_id.bytes));
+    reply_opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
+    reply_opts.insert(DhcpOption::ClientId(client_id.bytes));
     DhcpV6Response::Message(ResponseMessage {
         message: reply,
         reservation: reserved_address,
@@ -362,7 +351,7 @@ fn handle_request(
             // ReplyOptions [IAPD[IAPrefix], IANA[IAAddr]]
 
             // construct IA_PD information
-            if msg.ia_pd().is_some() {
+            if let Some(iapd) = msg.ia_pd() {
                 let mut ia_pd_opts = DhcpOptions::new();
                 ia_pd_opts.insert(DhcpOption::IAPrefix(IAPrefix {
                     preferred_lifetime: PREFERRED_LIFETIME,
@@ -373,7 +362,7 @@ fn handle_request(
                 }));
                 // add IA_PD information to Reply message
                 opts.insert(DhcpOption::IAPD(IAPD {
-                    id: 1,
+                    id: iapd.id,
                     t1: PREFERRED_LIFETIME,
                     t2: VALID_LIFETIME,
                     opts: ia_pd_opts,
@@ -381,7 +370,7 @@ fn handle_request(
             }
 
             // construct IA_NA information
-            if msg.ia_na().is_some() {
+            if let Some(iana) = msg.ia_na() {
                 let mut ia_na_opts = DhcpOptions::new();
                 ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
                     addr: reservation.ipv6_na,
@@ -391,7 +380,7 @@ fn handle_request(
                 }));
                 // add IA_NA information to Reply message
                 opts.insert(DhcpOption::IANA(IANA {
-                    id: 1,
+                    id: iana.id,
                     t1: PREFERRED_LIFETIME,
                     t2: VALID_LIFETIME,
                     opts: ia_na_opts,
