@@ -16,6 +16,9 @@ mod analytics;
 mod v4;
 mod v6;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const GIT_HASH: Option<&str> = option_env!("GIT_HASH");
+
 fn main() {
     let mut args = pico_args::Arguments::from_env();
     if args.contains(["-h", "--help"]) {
@@ -34,6 +37,10 @@ fn main() {
         let mut extractors: Vec<_> = extractors::get_all_extractors().into_keys().collect();
         extractors.sort_unstable();
         println!("{}", extractors.join(", "));
+        return;
+    }
+    if args.contains("--version") {
+        println!("{} ({})", VERSION, GIT_HASH.unwrap_or("unknown"));
         return;
     }
 
