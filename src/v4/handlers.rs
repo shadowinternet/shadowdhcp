@@ -1,23 +1,15 @@
 use advmac::MacAddr6;
-use arc_swap::ArcSwapAny;
-use compact_str::CompactString;
-use dhcproto::{
-    v4::{self, relay::RelayAgentInformation, DhcpOption, Flags},
-    Decodable, Encodable,
-};
-use std::{
-    io,
-    net::{Ipv4Addr, UdpSocket},
-    sync::Arc,
-};
-use tracing::{debug, error, field, info, instrument, trace, warn, Span};
+use dhcproto::v4::{self, DhcpOption, Flags};
+use std::net::Ipv4Addr;
+use tracing::{debug, error, field, info, instrument, warn, Span};
 
-use shadow_dhcpv6::{
-    config::Config, extractors::Option82ExtractorFn, leasedb::LeaseDb,
-    reservationdb::ReservationDb, Option82, RelayAgentInformationExt, Reservation, V4Key,
-};
+use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, V4Key};
 
-const ADDRESS_LEASE_TIME: u32 = 3600;
+use crate::v4::{
+    extensions::ShadowMessageExtV4,
+    reservation::find_reservation_by_relay_info,
+    ADDRESS_LEASE_TIME,
+};
 
 /// 4.3 A DHCP server can receive the following messages from a client:
 /// * DHCPDISCOVER
@@ -25,7 +17,7 @@ const ADDRESS_LEASE_TIME: u32 = 3600;
 /// * DHCPDECLINE
 /// * DHCPRELEASE
 /// * DHCPINFORM
-fn handle_message(
+pub fn handle_message(
     reservations: &ReservationDb,
     leases: &LeaseDb,
     config: &Config,
@@ -77,7 +69,7 @@ fn handle_discover(
     let reservation = match reservations
         .by_mac(mac_addr)
         .or(relay.and_then(|relay_info| {
-            get_reservation_by_relay_information(
+            find_reservation_by_relay_info(
                 reservations,
                 &config.option82_extractors,
                 relay_info,
@@ -172,7 +164,7 @@ fn handle_request(
     let reservation = match reservations
         .by_mac(mac_addr)
         .or(relay.and_then(|relay_info| {
-            get_reservation_by_relay_information(
+            find_reservation_by_relay_info(
                 reservations,
                 &config.option82_extractors,
                 relay_info,
@@ -283,117 +275,4 @@ fn handle_request(
     }
 
     Some(reply)
-}
-
-fn get_reservation_by_relay_information(
-    reservations: &ReservationDb,
-    extractors: &[Option82ExtractorFn],
-    relay: &RelayAgentInformation,
-) -> Option<Arc<Reservation>> {
-    let circuit = relay
-        .circuit_id()
-        .and_then(|v| CompactString::from_utf8(v).ok());
-    let remote = relay
-        .remote_id()
-        .and_then(|v| CompactString::from_utf8(v).ok());
-    let subscriber = relay
-        .subscriber_id()
-        .and_then(|v| CompactString::from_utf8(v).ok());
-
-    let option = Option82 {
-        circuit,
-        remote,
-        subscriber,
-    };
-
-    debug!("{option:?}");
-
-    extractors.iter().find_map(|extractor| {
-        extractor(&option).and_then(|extracted_opt| reservations.by_opt82(&extracted_opt))
-    })
-}
-
-pub fn v4_worker(
-    reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
-    leases: Arc<LeaseDb>,
-    config: Arc<ArcSwapAny<Arc<Config>>>,
-) {
-    let mut read_buf = [0u8; 2048];
-    let bind_addr = std::env::var("SHADOW_DHCP4_BIND").unwrap_or("0.0.0.0:67".into());
-    let socket = UdpSocket::bind(&bind_addr).expect("udp bind");
-    info!("Successfully bound to: {bind_addr}");
-
-    loop {
-        let (amount, src) = match socket.recv_from(&mut read_buf) {
-            Ok((amount, src)) => {
-                debug!("Received {amount} bytes from {src:?}");
-                trace!("Data: {:x?}", &read_buf[..amount]);
-                (amount, src)
-            }
-            Err(err) => {
-                error!("Error receiving: {err:?}");
-                match err.kind() {
-                    io::ErrorKind::ConnectionReset => {
-                        info!("Sent response to host that responded with ICMP unreachable");
-                        continue;
-                    }
-                    _ => todo!(),
-                }
-            }
-        };
-
-        match v4::Message::from_bytes(&read_buf[..amount]) {
-            Ok(msg) => {
-                if let Some(response_msg) =
-                    handle_message(&reservations.load(), &leases, &config.load(), msg)
-                {
-                    let write_buf = response_msg.to_vec().expect("encoding response message");
-                    match socket.send_to(&write_buf, src) {
-                        Ok(sent) => debug!("responded to {src} with {sent} bytes"),
-                        Err(e) => error!("Problem sending response message: {e}"),
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Unable to parse dhcpv4 message {}", e);
-            }
-        }
-    }
-}
-
-trait ShadowMessageExtV4 {
-    fn message_type(&self) -> Option<&v4::MessageType>;
-    fn server_id(&self) -> Option<&Ipv4Addr>;
-    fn requested_ip_addr(&self) -> Option<&Ipv4Addr>;
-    fn relay_agent_information(&self) -> Option<&v4::relay::RelayAgentInformation>;
-}
-
-impl ShadowMessageExtV4 for v4::Message {
-    fn message_type(&self) -> Option<&v4::MessageType> {
-        self.opts().iter().find_map(|o| match o.1 {
-            v4::DhcpOption::MessageType(mt) => Some(mt),
-            _ => None,
-        })
-    }
-
-    fn relay_agent_information(&self) -> Option<&v4::relay::RelayAgentInformation> {
-        self.opts().iter().find_map(|o| match o.1 {
-            v4::DhcpOption::RelayAgentInformation(relay) => Some(relay),
-            _ => None,
-        })
-    }
-
-    fn server_id(&self) -> Option<&Ipv4Addr> {
-        self.opts().iter().find_map(|o| match o.1 {
-            v4::DhcpOption::ServerIdentifier(addr) => Some(addr),
-            _ => None,
-        })
-    }
-
-    fn requested_ip_addr(&self) -> Option<&Ipv4Addr> {
-        self.opts().iter().find_map(|o| match o.1 {
-            v4::DhcpOption::RequestedIpAddress(addr) => Some(addr),
-            _ => None,
-        })
-    }
 }
