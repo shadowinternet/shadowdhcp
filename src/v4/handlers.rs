@@ -6,9 +6,8 @@ use tracing::{debug, error, field, info, instrument, warn, Span};
 use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, V4Key};
 
 use crate::v4::{
-    extensions::ShadowMessageExtV4,
-    reservation::find_reservation_by_relay_info,
-    ADDRESS_LEASE_TIME,
+    extensions::ShadowMessageExtV4, reservation::find_reservation_by_relay_info,
+    ADDRESS_LEASE_TIME, REBINDING_TIME, RENEWAL_TIME,
 };
 
 /// 4.3 A DHCP server can receive the following messages from a client:
@@ -69,11 +68,7 @@ fn handle_discover(
     let reservation = match reservations
         .by_mac(mac_addr)
         .or(relay.and_then(|relay_info| {
-            find_reservation_by_relay_info(
-                reservations,
-                &config.option82_extractors,
-                relay_info,
-            )
+            find_reservation_by_relay_info(reservations, &config.option82_extractors, relay_info)
         })) {
         Some(r) => {
             info!(ipv4 = %r.ipv4, "Found reservation for IP");
@@ -120,6 +115,8 @@ fn handle_discover(
     opts.insert(DhcpOption::Router(vec![gateway]));
     opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
     opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
+    opts.insert(DhcpOption::Renewal(RENEWAL_TIME));
+    opts.insert(DhcpOption::Rebinding(REBINDING_TIME));
     opts.insert(DhcpOption::End);
 
     Some(reply)
@@ -164,11 +161,7 @@ fn handle_request(
     let reservation = match reservations
         .by_mac(mac_addr)
         .or(relay.and_then(|relay_info| {
-            find_reservation_by_relay_info(
-                reservations,
-                &config.option82_extractors,
-                relay_info,
-            )
+            find_reservation_by_relay_info(reservations, &config.option82_extractors, relay_info)
         })) {
         Some(r) => {
             info!(ipv4 = %r.ipv4, "Found reservation for IP");
@@ -229,7 +222,6 @@ fn handle_request(
             } else {
                 debug!("variant: rebinding")
             }
-            reply.set_yiaddr(Ipv4Addr::UNSPECIFIED); // clients already know their address from ciaddr
             ciaddr
         }
         _ => {
@@ -238,21 +230,21 @@ fn handle_request(
         }
     };
 
-    let opts = reply.opts_mut();
-
     if client_requested_ip == &reservation.ipv4 {
         // the server selected in the DHCPREQUEST message commits the binding, and responds with a DHCPACK message
         // containing the configuration parameters for the requesting client. The combination of 'client identifier'
         // or 'chaddr' and assigned network address constitute a unique identifier for the client's lease.
         // If the server is unable to satisfy the DHCPREQUEST message (e.g., the address is already allocated) the
         // server should respond with a DHCPNAK message.
+        let opts = reply.opts_mut();
         opts.insert(DhcpOption::MessageType(v4::MessageType::Ack));
         opts.insert(DhcpOption::ServerIdentifier(config.v4_server_id));
         opts.insert(DhcpOption::SubnetMask(subnet_mask));
         opts.insert(DhcpOption::Router(vec![gateway]));
         opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
         opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
-        // TODO: add T1 (renewal time) and T2 (rebinding time)
+        opts.insert(DhcpOption::Renewal(RENEWAL_TIME));
+        opts.insert(DhcpOption::Rebinding(REBINDING_TIME));
         // TODO: add support for parameter request list option
         opts.insert(DhcpOption::End);
 
@@ -264,14 +256,17 @@ fn handle_request(
         warn!(reservation_ipv4 = %reservation.ipv4, %client_requested_ip,
             "client requested ip doesn't match reserved address, sending DHCPNAK",
         );
-        opts.insert(DhcpOption::MessageType(v4::MessageType::Nak));
-        opts.insert(DhcpOption::ServerIdentifier(config.v4_server_id));
-        opts.insert(DhcpOption::End);
+        // RFC 2131 Table 3: yiaddr in DHCPNAK MUST be 0
+        reply.set_yiaddr(Ipv4Addr::UNSPECIFIED);
         if msg.giaddr() != Ipv4Addr::UNSPECIFIED {
             // init-reboot NAK should set broadcast bit when relayed
             let flags = reply.flags();
             reply.set_flags(Flags::set_broadcast(flags));
         }
+        let opts = reply.opts_mut();
+        opts.insert(DhcpOption::MessageType(v4::MessageType::Nak));
+        opts.insert(DhcpOption::ServerIdentifier(config.v4_server_id));
+        opts.insert(DhcpOption::End);
     }
 
     Some(reply)

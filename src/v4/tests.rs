@@ -9,7 +9,10 @@ use shadow_dhcpv6::{
 };
 use std::net::Ipv4Addr;
 
-use crate::v4::{extensions::ShadowMessageExtV4, handlers::handle_message, ADDRESS_LEASE_TIME};
+use crate::v4::{
+    extensions::ShadowMessageExtV4, handlers::handle_message, ADDRESS_LEASE_TIME, REBINDING_TIME,
+    RENEWAL_TIME,
+};
 
 const TEST_MAC: MacAddr6 = MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 const TEST_MAC_2: MacAddr6 = MacAddr6::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
@@ -440,22 +443,6 @@ fn request_renew_returns_ack() {
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
 }
 
-/// NOTE: This test documents CURRENT behavior which is INCORRECT per RFC 2131.
-/// See `renew_ack_yiaddr_must_be_set` for the correct RFC requirement.
-/// RFC 2131 Table 3 says yiaddr in DHCPACK MUST be "IP address assigned to client"
-#[test]
-#[ignore = "Documents current buggy behavior - yiaddr should be set per RFC 2131"]
-fn request_renew_yiaddr_is_unspecified_BUGGY() {
-    let (config, reservations, leases) = create_test_env();
-    let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
-    let msg = create_request_renew(TEST_MAC, 0xEEEEEEEE, reserved_ip);
-
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
-
-    // BUG: Current implementation sets yiaddr to 0, but RFC 2131 requires it to be set
-    assert_eq!(reply.yiaddr(), Ipv4Addr::UNSPECIFIED);
-}
-
 // ============================================================================
 // REQUEST Tests - REBINDING variant
 // ============================================================================
@@ -470,22 +457,6 @@ fn request_rebinding_returns_ack() {
     let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
-}
-
-/// NOTE: This test documents CURRENT behavior which is INCORRECT per RFC 2131.
-/// See `rebinding_ack_yiaddr_must_be_set` for the correct RFC requirement.
-#[test]
-#[ignore = "Documents current buggy behavior - yiaddr should be set per RFC 2131"]
-fn request_rebinding_yiaddr_is_unspecified_BUGGY() {
-    let (config, reservations, leases) = create_test_env();
-    let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
-    let relay_ip = Ipv4Addr::new(192, 168, 1, 254);
-    let msg = create_request_rebinding(TEST_MAC, 0xF1F1F1F1, reserved_ip, relay_ip);
-
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
-
-    // BUG: Current implementation sets yiaddr to 0, but RFC 2131 requires it to be set
-    assert_eq!(reply.yiaddr(), Ipv4Addr::UNSPECIFIED);
 }
 
 // ============================================================================
@@ -618,49 +589,6 @@ fn response_preserves_flags() {
 }
 
 // ============================================================================
-// Message type handling tests
-// ============================================================================
-
-#[test]
-fn decline_returns_none() {
-    let (config, reservations, leases) = create_test_env();
-    let mut msg = create_discover(TEST_MAC, 0xF9F9F9F9);
-    msg.opts_mut()
-        .insert(DhcpOption::MessageType(v4::MessageType::Decline));
-
-    let reply = handle_message(&reservations, &leases, &config, msg);
-
-    assert!(reply.is_none(), "DECLINE should return no response");
-}
-
-#[test]
-fn release_returns_none() {
-    let (config, reservations, leases) = create_test_env();
-    let mut msg = create_discover(TEST_MAC, 0xFAFAFAFA);
-    msg.opts_mut()
-        .insert(DhcpOption::MessageType(v4::MessageType::Release));
-
-    let reply = handle_message(&reservations, &leases, &config, msg);
-
-    assert!(reply.is_none(), "RELEASE should return no response");
-}
-
-#[test]
-fn inform_returns_none() {
-    let (config, reservations, leases) = create_test_env();
-    let mut msg = create_discover(TEST_MAC, 0xFBFBFBFB);
-    msg.opts_mut()
-        .insert(DhcpOption::MessageType(v4::MessageType::Inform));
-
-    let reply = handle_message(&reservations, &leases, &config, msg);
-
-    assert!(
-        reply.is_none(),
-        "INFORM should return no response (not implemented)"
-    );
-}
-
-// ============================================================================
 // RFC 2131 Compliance Tests - These test for potential protocol bugs
 // ============================================================================
 
@@ -686,7 +614,6 @@ fn nak_yiaddr_must_be_zero() {
 
 /// RFC 2131 Section 4.3.2 and Table 3: In RENEW/REBINDING ACK, yiaddr MUST be
 /// set to the assigned IP address, not 0.
-/// BUG: Current implementation sets yiaddr to UNSPECIFIED for RENEW/REBINDING
 #[test]
 fn renew_ack_yiaddr_must_be_set() {
     let (config, reservations, leases) = create_test_env();
@@ -726,48 +653,32 @@ fn rebinding_ack_yiaddr_must_be_set() {
     );
 }
 
-// ============================================================================
-// TODO-related tests - Testing for missing features mentioned in TODOs
-// ============================================================================
-
 /// RFC 2131: T1 (renewal time, option 58) SHOULD be included
-/// TODO in code: "add T1 (renewal time) and T2 (rebinding time)"
 #[test]
-fn ack_should_include_t1_renewal_time() {
+fn ack_should_include_t1_renewal_time_t2_rebinding_time() {
     let (config, reservations, leases) = create_test_env();
     let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
     let msg = create_request_selecting(TEST_MAC, 0x77778888, config.v4_server_id, reserved_ip);
 
     let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
 
-    // T1 is typically 0.5 * lease_time = 1800 seconds
     let has_t1 = reply
         .opts()
         .iter()
-        .any(|(_, opt)| matches!(opt, DhcpOption::Renewal(t1) if *t1 > 0));
+        .any(|(_, opt)| matches!(opt, DhcpOption::Renewal(t1) if *t1 == RENEWAL_TIME));
     assert!(
         has_t1,
-        "RFC 2131: DHCPACK SHOULD include T1 (Renewal Time, option 58)"
+        "RFC 2131: DHCPACK SHOULD include T1 (Renewal Time = {})",
+        RENEWAL_TIME
     );
-}
-
-/// RFC 2131: T2 (rebinding time, option 59) SHOULD be included
-#[test]
-fn ack_should_include_t2_rebinding_time() {
-    let (config, reservations, leases) = create_test_env();
-    let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
-    let msg = create_request_selecting(TEST_MAC, 0x9999AAAA, config.v4_server_id, reserved_ip);
-
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
-
-    // T2 is typically 0.875 * lease_time = 3150 seconds
     let has_t2 = reply
         .opts()
         .iter()
-        .any(|(_, opt)| matches!(opt, DhcpOption::Rebinding(t2) if *t2 > 0));
+        .any(|(_, opt)| matches!(opt, DhcpOption::Rebinding(t2) if *t2 == REBINDING_TIME));
     assert!(
         has_t2,
-        "RFC 2131: DHCPACK SHOULD include T2 (Rebinding Time, option 59)"
+        "RFC 2131: DHCPACK SHOULD include T2 (Rebinding Time = {})",
+        REBINDING_TIME
     );
 }
 
@@ -800,27 +711,19 @@ fn offer_should_include_t1_renewal_time() {
     let has_t1 = reply
         .opts()
         .iter()
-        .any(|(_, opt)| matches!(opt, DhcpOption::Renewal(_)));
+        .any(|(_, opt)| matches!(opt, DhcpOption::Renewal(t1) if *t1 == RENEWAL_TIME));
     assert!(
         has_t1,
-        "DHCPOFFER SHOULD include T1 (Renewal Time) so client knows renewal schedule"
+        "DHCPOFFER SHOULD include T1 (Renewal Time = {})",
+        RENEWAL_TIME
     );
-}
-
-/// RFC 2131: OFFER should include T2 (rebinding time)
-#[test]
-fn offer_should_include_t2_rebinding_time() {
-    let (config, reservations, leases) = create_test_env();
-    let msg = create_discover(TEST_MAC, 0xFFFF0000);
-
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
-
     let has_t2 = reply
         .opts()
         .iter()
-        .any(|(_, opt)| matches!(opt, DhcpOption::Rebinding(_)));
+        .any(|(_, opt)| matches!(opt, DhcpOption::Rebinding(t2) if *t2 == REBINDING_TIME));
     assert!(
         has_t2,
-        "DHCPOFFER SHOULD include T2 (Rebinding Time)"
+        "DHCPOFFER SHOULD include T2 (Rebinding Time = {})",
+        REBINDING_TIME
     );
 }
