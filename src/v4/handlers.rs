@@ -1,14 +1,57 @@
 use advmac::MacAddr6;
 use dhcproto::v4::{self, DhcpOption, Flags};
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, sync::Arc};
 use tracing::{debug, error, field, info, instrument, warn, Span};
 
-use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, V4Key};
+use shadow_dhcpv6::{
+    config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, Reservation, V4Key,
+};
 
 use crate::v4::{
     extensions::ShadowMessageExtV4, reservation::find_reservation_by_relay_info,
     ADDRESS_LEASE_TIME, REBINDING_TIME, RENEWAL_TIME,
 };
+
+/// A DHCPv4 response message produced by the server.
+///
+/// If a reservation was used to construct the message, it is included for logging
+/// and observability
+pub struct ResponseMessage {
+    pub message: v4::Message,
+    pub reservation: Option<Arc<Reservation>>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum NoResponseReason {
+    NoReservation,
+    NoValidMac,
+    NoServerSubnet,
+    Discarded,
+    WrongServerId,
+    NoMessageType,
+}
+
+impl NoResponseReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NoResponseReason::NoReservation => "NoReservation",
+            NoResponseReason::NoValidMac => "NoValidMac",
+            NoResponseReason::NoServerSubnet => "NoServerSubnet",
+            NoResponseReason::Discarded => "Discarded",
+            NoResponseReason::WrongServerId => "WrongServerId",
+            NoResponseReason::NoMessageType => "NoMessageType",
+        }
+    }
+}
+
+/// Result of processing an incoming DHCPv6 message.
+///
+/// `DhcpV4Response` indicates whether the server should send a DHCPv6
+/// message back to the client or intentionally remain silent.
+pub enum DhcpV4Response {
+    Message(ResponseMessage),
+    NoResponse(NoResponseReason),
+}
 
 /// 4.3 A DHCP server can receive the following messages from a client:
 /// * DHCPDISCOVER
@@ -20,28 +63,31 @@ pub fn handle_message(
     reservations: &ReservationDb,
     leases: &LeaseDb,
     config: &Config,
-    msg: v4::Message,
-) -> Option<v4::Message> {
+    msg: &v4::Message,
+) -> DhcpV4Response {
     // servers should only respond to BootRequest messages
     let message_type = match msg.opcode() {
-        v4::Opcode::BootRequest => msg.message_type()?,
+        v4::Opcode::BootRequest => match msg.message_type() {
+            Some(mt) => mt,
+            None => return DhcpV4Response::NoResponse(NoResponseReason::NoMessageType),
+        },
         // Servers don't receive BootReply
-        v4::Opcode::BootReply => return None,
+        v4::Opcode::BootReply => return DhcpV4Response::NoResponse(NoResponseReason::Discarded),
         // Skip handling Unknown
-        v4::Opcode::Unknown(_) => return None,
+        v4::Opcode::Unknown(_) => return DhcpV4Response::NoResponse(NoResponseReason::Discarded),
     };
 
     match message_type {
         v4::MessageType::Discover => handle_discover(reservations, config, &msg),
         v4::MessageType::Request => handle_request(reservations, leases, config, &msg),
-        v4::MessageType::Decline => None,
-        v4::MessageType::Release => None,
+        v4::MessageType::Decline => DhcpV4Response::NoResponse(NoResponseReason::Discarded),
+        v4::MessageType::Release => DhcpV4Response::NoResponse(NoResponseReason::Discarded),
         // If a client has obtained a network address through some other means (e.g., manual configuration), it
         // may use a DHCPINFORM request message to obtain other local configuration parameters. Unicast reply sent
         // to the client.
-        v4::MessageType::Inform => None,
+        v4::MessageType::Inform => DhcpV4Response::NoResponse(NoResponseReason::Discarded),
         // Other messages are not valid for a server to receive
-        _ => None,
+        _ => DhcpV4Response::NoResponse(NoResponseReason::Discarded),
     }
 }
 
@@ -57,9 +103,12 @@ fn handle_discover(
     reservations: &ReservationDb,
     config: &Config,
     msg: &v4::Message,
-) -> Option<v4::Message> {
+) -> DhcpV4Response {
     // get client hwaddr, or option82 key
-    let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
+    let mac_addr = match MacAddr6::try_from(msg.chaddr()).ok() {
+        Some(ma) => ma,
+        None => return DhcpV4Response::NoResponse(NoResponseReason::NoValidMac),
+    };
     Span::current().record("mac", field::display(mac_addr));
     let relay = msg.relay_agent_information();
     info!("DHCPDiscover");
@@ -76,7 +125,7 @@ fn handle_discover(
         }
         None => {
             info!("No reservation found");
-            return None;
+            return DhcpV4Response::NoResponse(NoResponseReason::NoReservation);
         }
     };
 
@@ -89,7 +138,7 @@ fn handle_discover(
         Some((gw, subnet)) => (gw, subnet),
         None => {
             error!("Couldn't find configured subnet for {}", &reservation.ipv4);
-            return None;
+            return DhcpV4Response::NoResponse(NoResponseReason::NoServerSubnet);
         }
     };
 
@@ -119,7 +168,10 @@ fn handle_discover(
     opts.insert(DhcpOption::Rebinding(REBINDING_TIME));
     opts.insert(DhcpOption::End);
 
-    Some(reply)
+    DhcpV4Response::Message(ResponseMessage {
+        message: reply,
+        reservation: Some(reservation),
+    })
 }
 
 /// DHCPREQUEST - Client message to servers either (a) requesting offered parameters from one server
@@ -134,7 +186,7 @@ fn handle_request(
     leases: &LeaseDb,
     config: &Config,
     msg: &v4::Message,
-) -> Option<v4::Message> {
+) -> DhcpV4Response {
     // Four variants of DHCPREQUEST
     //  * SELECTING
     //    server id is set from the client and matches
@@ -152,7 +204,10 @@ fn handle_request(
     //  * REBINDING - when client can not reach server unicast, it broadcasts.
     //    same prereqs as RENEW, but sent via the relay
 
-    let mac_addr = MacAddr6::try_from(msg.chaddr()).ok()?;
+    let mac_addr = match MacAddr6::try_from(msg.chaddr()).ok() {
+        Some(ma) => ma,
+        None => return DhcpV4Response::NoResponse(NoResponseReason::NoValidMac),
+    };
     let relay = msg.relay_agent_information();
     Span::current().record("mac", field::display(mac_addr));
     info!("DHCPRequest");
@@ -169,7 +224,7 @@ fn handle_request(
         }
         None => {
             info!("No reservation found");
-            return None;
+            return DhcpV4Response::NoResponse(NoResponseReason::NoReservation);
         }
     };
 
@@ -182,7 +237,7 @@ fn handle_request(
         Some((gw, subnet)) => (gw, subnet),
         None => {
             warn!("Couldn't find configured subnet for {}", &reservation.ipv4);
-            return None;
+            return DhcpV4Response::NoResponse(NoResponseReason::NoServerSubnet);
         }
     };
 
@@ -208,7 +263,7 @@ fn handle_request(
             debug!("variant: selecting");
             if server_id != &config.v4_server_id {
                 info!(%server_id, "SELECTING server id did not match");
-                return None;
+                return DhcpV4Response::NoResponse(NoResponseReason::WrongServerId);
             }
             requested_ip
         }
@@ -226,7 +281,7 @@ fn handle_request(
         }
         _ => {
             info!("Unrecognized DHCPREQUEST variant");
-            return None;
+            return DhcpV4Response::NoResponse(NoResponseReason::Discarded);
         }
     };
 
@@ -269,5 +324,8 @@ fn handle_request(
         opts.insert(DhcpOption::End);
     }
 
-    Some(reply)
+    DhcpV4Response::Message(ResponseMessage {
+        message: reply,
+        reservation: Some(reservation),
+    })
 }

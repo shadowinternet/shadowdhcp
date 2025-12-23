@@ -9,7 +9,7 @@ use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::Reservation
 use std::{
     fmt::Write,
     io,
-    net::UdpSocket,
+    net::{SocketAddr, UdpSocket},
     sync::{mpsc, Arc},
 };
 use tracing::{debug, error, info, trace};
@@ -93,23 +93,18 @@ pub fn v6_worker(
                     &msg,
                 ) {
                     DhcpV6Response::NoResponse(reason) => {
+                        debug!("Not responding {:?}", reason);
                         if let Some(ref event_sender) = event_channel {
-                            let event = DhcpEventV6::failed(&inner_msg, &msg, reason.as_str());
+                            let relay_addr = match src {
+                                SocketAddr::V6(v6) => *v6.ip(),
+                                SocketAddr::V4(_) => continue, // DHCPv6 requires IPv6
+                            };
+                            let event =
+                                DhcpEventV6::failed(&inner_msg, &msg, relay_addr, reason.as_str());
                             let _ = event_sender.send(DhcpEvent::V6(event));
                         }
-                        debug!("Not responding {:?}", reason);
                     }
                     DhcpV6Response::Message(resp) => {
-                        if let Some(ref event_sender) = event_channel {
-                            let event = DhcpEventV6::success(
-                                &inner_msg,
-                                &msg,
-                                &resp.message,
-                                resp.reservation.as_deref(),
-                            );
-                            let _ = event_sender.send(DhcpEvent::V6(event));
-                        }
-
                         // wrap the message in a RelayRepl
                         let mut relay_reply_opts = DhcpOptions::new();
                         relay_reply_opts.insert(DhcpOption::RelayMsg(
@@ -135,8 +130,23 @@ pub fn v6_worker(
 
                         let write_buf = relay_msg.to_vec().expect("encoding response msg");
                         match socket.send_to(&write_buf, src) {
-                            Ok(sent) => debug!("responded to {src} with {sent} bytes"),
-                            Err(e) => error!("Problem sending respones message: {e}"),
+                            Ok(sent) => {
+                                debug!("responded to {src} with {sent} bytes");
+                                if let Some(ref event_sender) = event_channel {
+                                    let relay_addr = match src {
+                                        SocketAddr::V6(v6) => *v6.ip(),
+                                        SocketAddr::V4(_) => continue, // DHCPv6 requires IPv6
+                                    };
+                                    let event = DhcpEventV6::success(
+                                        &inner_msg,
+                                        &msg,
+                                        relay_addr,
+                                        resp.reservation.as_deref(),
+                                    );
+                                    let _ = event_sender.send(DhcpEvent::V6(event));
+                                }
+                            }
+                            Err(e) => error!("Problem sending response message: {e}"),
                         }
                     }
                 }

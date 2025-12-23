@@ -10,8 +10,9 @@ use shadow_dhcpv6::{
 use std::net::Ipv4Addr;
 
 use crate::v4::{
-    extensions::ShadowMessageExtV4, handlers::handle_message, ADDRESS_LEASE_TIME, REBINDING_TIME,
-    RENEWAL_TIME,
+    extensions::ShadowMessageExtV4,
+    handlers::{handle_message, DhcpV4Response},
+    ADDRESS_LEASE_TIME, REBINDING_TIME, RENEWAL_TIME,
 };
 
 const TEST_MAC: MacAddr6 = MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
@@ -188,7 +189,12 @@ fn discover_with_mac_reservation_returns_offer() {
     let (config, reservations, leases) = create_test_env();
     let msg = create_discover(TEST_MAC, 0x12345678);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Offer));
     assert_eq!(reply.yiaddr(), Ipv4Addr::new(192, 168, 1, 100));
@@ -208,7 +214,12 @@ fn discover_with_option82_reservation_returns_offer() {
     msg.opts_mut()
         .insert(DhcpOption::RelayAgentInformation(relay_info));
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Offer));
     assert_eq!(reply.yiaddr(), Ipv4Addr::new(192, 168, 1, 200));
@@ -220,7 +231,12 @@ fn discover_echoes_xid() {
     let xid = 0xDEADBEEF;
     let msg = create_discover(TEST_MAC, xid);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     assert_eq!(reply.xid(), xid);
 }
@@ -230,7 +246,12 @@ fn discover_echoes_chaddr() {
     let (config, reservations, leases) = create_test_env();
     let msg = create_discover(TEST_MAC, 0x11111111);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     assert_eq!(&reply.chaddr()[0..6], &TEST_MAC.to_array());
 }
@@ -242,7 +263,12 @@ fn discover_preserves_giaddr() {
     let relay_ip = Ipv4Addr::new(192, 168, 1, 254);
     msg.set_giaddr(relay_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     assert_eq!(reply.giaddr(), relay_ip);
 }
@@ -252,7 +278,12 @@ fn discover_sets_correct_yiaddr() {
     let (config, reservations, leases) = create_test_env();
     let msg = create_discover(TEST_MAC, 0x33333333);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     // Should be the reserved IP for TEST_MAC
     assert_eq!(reply.yiaddr(), Ipv4Addr::new(192, 168, 1, 100));
@@ -263,7 +294,12 @@ fn discover_includes_required_options() {
     let (config, reservations, leases) = create_test_env();
     let msg = create_discover(TEST_MAC, 0x44444444);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     // Check MessageType
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Offer));
@@ -303,10 +339,10 @@ fn discover_no_reservation_returns_none() {
     let unknown_mac = MacAddr6::new([0x99, 0x99, 0x99, 0x99, 0x99, 0x99]);
     let msg = create_discover(unknown_mac, 0x55555555);
 
-    let reply = handle_message(&reservations, &leases, &config, msg);
+    let reply = handle_message(&reservations, &leases, &config, &msg);
 
     assert!(
-        reply.is_none(),
+        matches!(reply, DhcpV4Response::NoResponse(_)),
         "Should not respond when no reservation exists"
     );
 }
@@ -332,10 +368,10 @@ fn discover_reservation_not_in_subnet_returns_none() {
         0x66666666,
     );
 
-    let reply = handle_message(&reservations, &leases, &config, msg);
+    let reply = handle_message(&reservations, &leases, &config, &msg);
 
     assert!(
-        reply.is_none(),
+        matches!(reply, DhcpV4Response::NoResponse(_)),
         "Should not respond when reservation IP not in configured subnet"
     );
 }
@@ -354,7 +390,12 @@ fn mac_has_priority_over_option82() {
     msg.opts_mut()
         .insert(DhcpOption::RelayAgentInformation(relay_info));
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     // Should get the MAC-based reservation (10.10.1.50), not the Option82 one (192.168.1.200)
     assert_eq!(reply.yiaddr(), Ipv4Addr::new(10, 10, 1, 50));
@@ -370,7 +411,10 @@ fn request_selecting_returns_ack() {
     let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
     let msg = create_request_selecting(TEST_MAC, 0x88888888, config.v4_server_id, reserved_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
     assert_eq!(reply.yiaddr(), reserved_ip);
@@ -383,10 +427,10 @@ fn request_selecting_wrong_server_id_ignored() {
     let wrong_server = Ipv4Addr::new(10, 0, 0, 99); // Different server
     let msg = create_request_selecting(TEST_MAC, 0x99999999, wrong_server, reserved_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg);
+    let reply = handle_message(&reservations, &leases, &config, &msg);
 
     assert!(
-        reply.is_none(),
+        matches!(reply, DhcpV4Response::NoResponse(_)),
         "Should ignore REQUEST for different server"
     );
 }
@@ -397,7 +441,10 @@ fn request_selecting_wrong_ip_returns_nak() {
     let wrong_ip = Ipv4Addr::new(192, 168, 1, 99); // Not the reserved IP
     let msg = create_request_selecting(TEST_MAC, 0xAAAAAAAA, config.v4_server_id, wrong_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected NAK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected NAK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Nak));
 }
@@ -412,7 +459,10 @@ fn request_init_reboot_returns_ack() {
     let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
     let msg = create_request_init_reboot(TEST_MAC, 0xBBBBBBBB, reserved_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
 }
@@ -423,7 +473,10 @@ fn request_init_reboot_wrong_ip_returns_nak() {
     let wrong_ip = Ipv4Addr::new(192, 168, 1, 99);
     let msg = create_request_init_reboot(TEST_MAC, 0xCCCCCCCC, wrong_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected NAK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected NAK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Nak));
 }
@@ -438,7 +491,10 @@ fn request_renew_returns_ack() {
     let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
     let msg = create_request_renew(TEST_MAC, 0xDDDDDDDD, reserved_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
 }
@@ -454,7 +510,10 @@ fn request_rebinding_returns_ack() {
     let relay_ip = Ipv4Addr::new(192, 168, 1, 254);
     let msg = create_request_rebinding(TEST_MAC, 0xF0F0F0F0, reserved_ip, relay_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
 }
@@ -471,7 +530,10 @@ fn request_nak_sets_broadcast_flag_when_relayed() {
     let relay_ip = Ipv4Addr::new(192, 168, 1, 254);
     msg.set_giaddr(relay_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected NAK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected NAK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Nak));
     // RFC2131: DHCPNAK sent via relay should have broadcast bit set
@@ -488,7 +550,10 @@ fn request_nak_no_broadcast_when_not_relayed() {
     let msg = create_request_init_reboot(TEST_MAC, 0xF3F3F3F3, wrong_ip);
     // giaddr is 0 (not relayed)
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected NAK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected NAK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Nak));
     // Not relayed, so broadcast flag should not be forcibly set
@@ -508,9 +573,12 @@ fn boot_reply_is_ignored() {
     let mut msg = create_discover(TEST_MAC, 0xF4F4F4F4);
     msg.set_opcode(Opcode::BootReply); // Server should ignore BootReply
 
-    let reply = handle_message(&reservations, &leases, &config, msg);
+    let reply = handle_message(&reservations, &leases, &config, &msg);
 
-    assert!(reply.is_none(), "Server should ignore BootReply messages");
+    assert!(
+        matches!(reply, DhcpV4Response::NoResponse(_)),
+        "Server should ignore BootReply messages"
+    );
 }
 
 #[test]
@@ -519,9 +587,12 @@ fn unknown_opcode_is_ignored() {
     let mut msg = create_discover(TEST_MAC, 0xF5F5F5F5);
     msg.set_opcode(Opcode::Unknown(99));
 
-    let reply = handle_message(&reservations, &leases, &config, msg);
+    let reply = handle_message(&reservations, &leases, &config, &msg);
 
-    assert!(reply.is_none(), "Server should ignore unknown opcodes");
+    assert!(
+        matches!(reply, DhcpV4Response::NoResponse(_)),
+        "Server should ignore unknown opcodes"
+    );
 }
 
 // ============================================================================
@@ -550,7 +621,10 @@ fn option82_binding_created_on_ack() {
     msg.opts_mut()
         .insert(DhcpOption::RelayAgentInformation(relay_info));
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
 
     // Now check that the MAC→Option82 binding was created in the lease database
@@ -569,7 +643,12 @@ fn response_opcode_is_boot_reply() {
     let (config, reservations, leases) = create_test_env();
     let msg = create_discover(TEST_MAC, 0xF7F7F7F7);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     assert_eq!(reply.opcode(), Opcode::BootReply);
 }
@@ -580,7 +659,12 @@ fn response_preserves_flags() {
     let mut msg = create_discover(TEST_MAC, 0xF8F8F8F8);
     msg.set_flags(Flags::set_broadcast(msg.flags())); // Client requests broadcast
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     assert!(
         Flags::broadcast(&reply.flags()),
@@ -600,7 +684,10 @@ fn nak_yiaddr_must_be_zero() {
     let wrong_ip = Ipv4Addr::new(192, 168, 1, 99); // Not the reserved IP
     let msg = create_request_selecting(TEST_MAC, 0x11112222, config.v4_server_id, wrong_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected NAK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected NAK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Nak));
     // RFC 2131 Table 3: yiaddr in DHCPNAK MUST be 0
@@ -620,7 +707,10 @@ fn renew_ack_yiaddr_must_be_set() {
     let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
     let msg = create_request_renew(TEST_MAC, 0x33334444, reserved_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
     // RFC 2131 Table 3: yiaddr in DHCPACK = "IP address assigned to client"
@@ -642,7 +732,10 @@ fn rebinding_ack_yiaddr_must_be_set() {
     let relay_ip = Ipv4Addr::new(192, 168, 1, 254);
     let msg = create_request_rebinding(TEST_MAC, 0x55556666, reserved_ip, relay_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
 
     assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
     assert_eq!(
@@ -660,7 +753,10 @@ fn ack_should_include_t1_renewal_time_t2_rebinding_time() {
     let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
     let msg = create_request_selecting(TEST_MAC, 0x77778888, config.v4_server_id, reserved_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected ACK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
 
     let has_t1 = reply
         .opts()
@@ -693,7 +789,10 @@ fn init_reboot_wrong_subnet_should_nak() {
     let wrong_subnet_ip = Ipv4Addr::new(172, 16, 0, 100);
     let msg = create_request_init_reboot(TEST_MAC, 0xBBBBCCCC, wrong_subnet_ip);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected NAK");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected NAK, got NoResponse({:?})", reason),
+    };
 
     // RFC 2131: "Server SHOULD send a DHCPNAK message to the client if the
     // 'requested IP address' is incorrect, or is on the wrong network."
@@ -706,7 +805,12 @@ fn offer_should_include_t1_renewal_time() {
     let (config, reservations, leases) = create_test_env();
     let msg = create_discover(TEST_MAC, 0xDDDDEEEE);
 
-    let reply = handle_message(&reservations, &leases, &config, msg).expect("Expected OFFER");
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
 
     let has_t1 = reply
         .opts()

@@ -103,7 +103,7 @@ pub fn tcp_writer<A: ToSocketAddrs + Debug>(address: A, rx: mpsc::Receiver<DhcpE
 
         // Optional metrics
         if dropped > 0 {
-            // log::warn!("Dropped {} DHCP events", dropped);
+            tracing::warn!("Dropped {} DHCP events", dropped);
             dropped = 0;
         }
     }

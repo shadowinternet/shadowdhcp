@@ -86,10 +86,11 @@ fn main() {
         .unzip();
 
     thread::scope(|s| {
-        let (v4db, v4leases, v4config) = (db.clone(), leases.clone(), config.clone());
+        let (v4db, v4leases, v4config, v4tx) =
+            (db.clone(), leases.clone(), config.clone(), tx.clone());
         let v4worker = thread::Builder::new()
             .name("v4worker".to_string())
-            .spawn_scoped(s, move || v4::v4_worker(v4db, v4leases, v4config))
+            .spawn_scoped(s, move || v4::v4_worker(v4db, v4leases, v4config, v4tx))
             .expect("v4worker spawn");
 
         let v6worker = thread::Builder::new()
