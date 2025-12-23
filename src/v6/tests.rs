@@ -15,7 +15,10 @@ use shadow_dhcpv6::{
 };
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::v6::{extensions::ShadowMessageExtV6, handlers::DhcpV6Response};
+use crate::v6::{
+    extensions::ShadowMessageExtV6, handlers::DhcpV6Response, PREFERRED_LIFETIME, REBINDING_TIME,
+    RENEWAL_TIME, VALID_LIFETIME,
+};
 
 const RESERVATION_MAC: MacAddr6 = MacAddr6::new([0, 1, 2, 3, 4, 5]);
 
@@ -368,18 +371,15 @@ fn renew_no_reservation_returns_no_binding() {
         _ => panic!("Expected Reply"),
     };
 
-    let status = resp
+    let message_level_status = resp
         .opts()
         .iter()
-        .find_map(|opt| match opt {
-            DhcpOption::StatusCode(code) => Some(code),
-            _ => None,
-        })
-        .expect("Reply missing StatusCode");
+        .find(|opt| matches!(opt, DhcpOption::StatusCode(_)));
+    assert!(
+        message_level_status.is_none(),
+        "StatusCode should NOT be at message level per RFC 8415"
+    );
 
-    assert_eq!(status.status, dhcproto::v6::Status::NoBinding);
-
-    // ✅ Lifetimes must be zeroed
     let returned_iana = resp.ia_na().expect("Reply missing IANA");
 
     let returned_addr = returned_iana
@@ -393,6 +393,95 @@ fn renew_no_reservation_returns_no_binding() {
 
     assert_eq!(returned_addr.preferred_life, 0);
     assert_eq!(returned_addr.valid_life, 0);
+
+    // Verify StatusCode is inside the IA_NA option
+    let ia_status = returned_iana
+        .opts
+        .iter()
+        .find_map(|opt| match opt {
+            DhcpOption::StatusCode(code) => Some(code),
+            _ => None,
+        })
+        .expect("IA_NA missing StatusCode - should be inside IA per RFC 8415");
+    assert_eq!(ia_status.status, dhcproto::v6::Status::NoBinding);
+}
+
+/// RFC 8415 Section 18.4.2: Verify NoBinding status is inside IA_PD option too
+#[test]
+fn renew_no_reservation_returns_no_binding_in_iapd() {
+    let (config, reservations, leases) = create_env();
+
+    let mut msg = Message::new(MessageType::Renew);
+    let opts = msg.opts_mut();
+
+    opts.insert(DhcpOption::ClientId(vec![0xde, 0xad, 0xbe, 0xff]));
+    opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
+
+    opts.insert(DhcpOption::IAPD(IAPD {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: {
+            let mut o = DhcpOptions::new();
+            o.insert(DhcpOption::IAPrefix(IAPrefix {
+                prefix_ip: "2001:db8:abcd::".parse().unwrap(),
+                prefix_len: 56,
+                preferred_lifetime: 100,
+                valid_lifetime: 200,
+                opts: DhcpOptions::new(),
+            }));
+            o
+        },
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected Reply"),
+    };
+
+    // Verify no message-level StatusCode
+    let message_level_status = resp
+        .opts()
+        .iter()
+        .find(|opt| matches!(opt, DhcpOption::StatusCode(_)));
+    assert!(
+        message_level_status.is_none(),
+        "StatusCode should NOT be at message level per RFC 8415"
+    );
+
+    let returned_iapd = resp.ia_pd().expect("Reply missing IA_PD");
+
+    // Verify lifetimes are zeroed
+    let returned_prefix = returned_iapd
+        .opts
+        .iter()
+        .find_map(|opt| match opt {
+            DhcpOption::IAPrefix(prefix) => Some(prefix),
+            _ => None,
+        })
+        .expect("Returned IA_PD missing IAPrefix");
+
+    assert_eq!(returned_prefix.preferred_lifetime, 0);
+    assert_eq!(returned_prefix.valid_lifetime, 0);
+
+    // Verify StatusCode is inside the IA_PD option
+    let ia_status = returned_iapd
+        .opts
+        .iter()
+        .find_map(|opt| match opt {
+            DhcpOption::StatusCode(code) => Some(code),
+            _ => None,
+        })
+        .expect("IA_PD missing StatusCode - should be inside IA per RFC 8415");
+    assert_eq!(ia_status.status, dhcproto::v6::Status::NoBinding);
 }
 
 // Generated with GPT-5.2 instant
@@ -764,4 +853,435 @@ fn dynamic_opt82_binding() {
     let reservation = db.by_opt82(&opt82).unwrap();
     assert_eq!(resp.ia_na_address().unwrap(), reservation.ipv6_na);
     assert_eq!(resp.ia_pd_prefix().unwrap(), reservation.ipv6_pd);
+}
+
+/// RFC 8415 Section 21.8: Advertise messages should include Preference option
+#[test]
+fn advertise_includes_preference_option() {
+    let (config, reservations, leases) = create_env();
+
+    let mut msg = Message::new(MessageType::Solicit);
+    let opts = msg.opts_mut();
+    opts.insert(DhcpOption::ClientId(vec![0xaa, 0xbb, 0xcc]));
+    opts.insert(DhcpOption::IANA(IANA {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: DhcpOptions::new(),
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected Advertise response"),
+    };
+
+    assert!(matches!(resp.msg_type(), MessageType::Advertise));
+
+    // Verify Preference option is included
+    let preference = resp
+        .opts()
+        .iter()
+        .find_map(|opt| match opt {
+            DhcpOption::Preference(pref) => Some(*pref),
+            _ => None,
+        })
+        .expect("Advertise should include Preference option per RFC 8415");
+
+    assert_eq!(preference, 255, "Preference should be 255 (maximum)");
+}
+
+/// RFC 8415: Reply messages (rapid commit) should NOT include Preference option
+#[test]
+fn rapid_commit_reply_does_not_include_preference() {
+    let (config, reservations, leases) = create_env();
+
+    let mut msg = Message::new(MessageType::Solicit);
+    let opts = msg.opts_mut();
+    opts.insert(DhcpOption::ClientId(vec![0xaa, 0xbb, 0xcc]));
+    opts.insert(DhcpOption::RapidCommit); // Request rapid commit
+    opts.insert(DhcpOption::IANA(IANA {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: DhcpOptions::new(),
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected Reply response"),
+    };
+
+    assert!(matches!(resp.msg_type(), MessageType::Reply));
+
+    // Verify Preference option is NOT included in Reply (only in Advertise)
+    let preference = resp
+        .opts()
+        .iter()
+        .find(|opt| matches!(opt, DhcpOption::Preference(_)));
+    assert!(
+        preference.is_none(),
+        "Reply should NOT include Preference option"
+    );
+
+    // But it should include RapidCommit
+    let rapid_commit = resp
+        .opts()
+        .iter()
+        .find(|opt| matches!(opt, DhcpOption::RapidCommit));
+    assert!(
+        rapid_commit.is_some(),
+        "Reply should include RapidCommit option"
+    );
+}
+
+/// RFC 8415 Section 21.4, 21.21: T1 and T2 must be less than preferred lifetime
+/// T1 = 0.5 * preferred_lifetime (RENEWAL_TIME)
+/// T2 = 0.8 * preferred_lifetime (REBINDING_TIME)
+#[test]
+fn t1_t2_constants_are_rfc_compliant() {
+    // T1 should be 0.5 * preferred_lifetime
+    assert_eq!(RENEWAL_TIME, PREFERRED_LIFETIME / 2);
+    assert_eq!(RENEWAL_TIME, 1800);
+
+    // T2 should be 0.8 * preferred_lifetime
+    assert_eq!(REBINDING_TIME, PREFERRED_LIFETIME * 4 / 5);
+    assert_eq!(REBINDING_TIME, 2880);
+
+    // RFC 8415: T1 < T2 < preferred_lifetime < valid_lifetime
+    assert!(RENEWAL_TIME < REBINDING_TIME);
+    assert!(REBINDING_TIME < PREFERRED_LIFETIME);
+    assert!(PREFERRED_LIFETIME < VALID_LIFETIME);
+}
+
+/// Verify that Solicit response contains correct T1/T2 values per RFC 8415
+#[test]
+fn solicit_response_has_correct_t1_t2() {
+    let (config, reservations, leases) = create_env();
+
+    let mut msg = Message::new(MessageType::Solicit);
+    let opts = msg.opts_mut();
+    opts.insert(DhcpOption::ClientId(vec![0xaa, 0xbb, 0xcc]));
+    opts.insert(DhcpOption::IANA(IANA {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: DhcpOptions::new(),
+    }));
+    opts.insert(DhcpOption::IAPD(IAPD {
+        id: 2,
+        t1: 0,
+        t2: 0,
+        opts: DhcpOptions::new(),
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected Advertise response"),
+    };
+
+    let iana = resp.ia_na().expect("Response missing IA_NA");
+    let iapd = resp.ia_pd().expect("Response missing IA_PD");
+
+    // Verify T1 and T2 are set correctly per RFC 8415
+    assert_eq!(iana.t1, RENEWAL_TIME, "IA_NA T1 should be RENEWAL_TIME");
+    assert_eq!(iana.t2, REBINDING_TIME, "IA_NA T2 should be REBINDING_TIME");
+    assert_eq!(iapd.t1, RENEWAL_TIME, "IA_PD T1 should be RENEWAL_TIME");
+    assert_eq!(iapd.t2, REBINDING_TIME, "IA_PD T2 should be REBINDING_TIME");
+
+    // Verify preferred and valid lifetimes in nested options
+    let ia_addr = iana
+        .opts
+        .iter()
+        .find_map(|o| match o {
+            DhcpOption::IAAddr(addr) => Some(addr),
+            _ => None,
+        })
+        .expect("IA_NA missing IAAddr");
+    assert_eq!(ia_addr.preferred_life, PREFERRED_LIFETIME);
+    assert_eq!(ia_addr.valid_life, VALID_LIFETIME);
+
+    let ia_prefix = iapd
+        .opts
+        .iter()
+        .find_map(|o| match o {
+            DhcpOption::IAPrefix(prefix) => Some(prefix),
+            _ => None,
+        })
+        .expect("IA_PD missing IAPrefix");
+    assert_eq!(ia_prefix.preferred_lifetime, PREFERRED_LIFETIME);
+    assert_eq!(ia_prefix.valid_lifetime, VALID_LIFETIME);
+}
+
+/// Verify that Request response contains correct T1/T2 values per RFC 8415
+#[test]
+fn request_response_has_correct_t1_t2() {
+    let (config, reservations, leases) = create_env();
+
+    let mut msg = Message::new(MessageType::Request);
+    let opts = msg.opts_mut();
+    opts.insert(DhcpOption::ClientId(vec![0xaa, 0xbb, 0xcc]));
+    opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
+    opts.insert(DhcpOption::IANA(IANA {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: DhcpOptions::new(),
+    }));
+    opts.insert(DhcpOption::IAPD(IAPD {
+        id: 2,
+        t1: 0,
+        t2: 0,
+        opts: DhcpOptions::new(),
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected Reply response"),
+    };
+
+    let iana = resp.ia_na().expect("Response missing IA_NA");
+    let iapd = resp.ia_pd().expect("Response missing IA_PD");
+
+    assert_eq!(iana.t1, RENEWAL_TIME, "IA_NA T1 should be RENEWAL_TIME");
+    assert_eq!(iana.t2, REBINDING_TIME, "IA_NA T2 should be REBINDING_TIME");
+    assert_eq!(iapd.t1, RENEWAL_TIME, "IA_PD T1 should be RENEWAL_TIME");
+    assert_eq!(iapd.t2, REBINDING_TIME, "IA_PD T2 should be REBINDING_TIME");
+}
+
+/// RFC 8415 Section 18.4.5: Rebind works without Server ID (unlike Renew)
+#[test]
+fn rebind_works_without_server_id() {
+    let (config, reservations, leases) = create_env();
+
+    let reservation = reservations
+        .by_mac(RESERVATION_MAC)
+        .expect("No reservation found");
+
+    let mut msg = Message::new(MessageType::Rebind);
+    let opts = msg.opts_mut();
+    // Rebind only requires Client ID, NOT Server ID
+    opts.insert(DhcpOption::ClientId(vec![0xaa, 0xbb, 0xcc]));
+    opts.insert(DhcpOption::IANA(IANA {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: {
+            let mut o = DhcpOptions::new();
+            o.insert(DhcpOption::IAAddr(IAAddr {
+                addr: reservation.ipv6_na,
+                preferred_life: 100,
+                valid_life: 200,
+                opts: DhcpOptions::new(),
+            }));
+            o
+        },
+    }));
+    opts.insert(DhcpOption::IAPD(IAPD {
+        id: 2,
+        t1: 0,
+        t2: 0,
+        opts: {
+            let mut o = DhcpOptions::new();
+            o.insert(DhcpOption::IAPrefix(IAPrefix {
+                prefix_ip: reservation.ipv6_pd.addr(),
+                prefix_len: reservation.ipv6_pd.prefix_len(),
+                preferred_lifetime: 100,
+                valid_lifetime: 200,
+                opts: DhcpOptions::new(),
+            }));
+            o
+        },
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected Reply response for Rebind"),
+    };
+
+    assert!(matches!(resp.msg_type(), MessageType::Reply));
+
+    // Verify IA_NA and IA_PD are returned with correct values
+    let iana = resp.ia_na().expect("Response missing IA_NA");
+    let iapd = resp.ia_pd().expect("Response missing IA_PD");
+
+    assert_eq!(iana.t1, RENEWAL_TIME);
+    assert_eq!(iana.t2, REBINDING_TIME);
+    assert_eq!(iapd.t1, RENEWAL_TIME);
+    assert_eq!(iapd.t2, REBINDING_TIME);
+
+    // Verify addresses/prefixes
+    let returned_na = resp.ia_na_address().unwrap();
+    let returned_pd = resp.ia_pd_prefix().unwrap();
+    assert_eq!(returned_na, reservation.ipv6_na);
+    assert_eq!(returned_pd, reservation.ipv6_pd);
+}
+
+/// RFC 8415: Rebind with no reservation returns NoBinding in IA options
+#[test]
+fn rebind_no_reservation_returns_no_binding() {
+    let (config, reservations, leases) = create_env();
+
+    let mut msg = Message::new(MessageType::Rebind);
+    let opts = msg.opts_mut();
+    opts.insert(DhcpOption::ClientId(vec![0xde, 0xad, 0xbe, 0xef]));
+    opts.insert(DhcpOption::IANA(IANA {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: {
+            let mut o = DhcpOptions::new();
+            o.insert(DhcpOption::IAAddr(IAAddr {
+                addr: "2001:db8::1234".parse().unwrap(),
+                preferred_life: 100,
+                valid_life: 200,
+                opts: DhcpOptions::new(),
+            }));
+            o
+        },
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected Reply response"),
+    };
+
+    let returned_iana = resp.ia_na().expect("Reply missing IA_NA");
+
+    // Verify NoBinding status is inside IA option
+    let ia_status = returned_iana
+        .opts
+        .iter()
+        .find_map(|opt| match opt {
+            DhcpOption::StatusCode(code) => Some(code),
+            _ => None,
+        })
+        .expect("IA_NA missing StatusCode");
+    assert_eq!(ia_status.status, dhcproto::v6::Status::NoBinding);
+
+    // Verify lifetimes are zeroed
+    let returned_addr = returned_iana
+        .opts
+        .iter()
+        .find_map(|opt| match opt {
+            DhcpOption::IAAddr(addr) => Some(addr),
+            _ => None,
+        })
+        .expect("IA_NA missing IAAddr");
+    assert_eq!(returned_addr.preferred_life, 0);
+    assert_eq!(returned_addr.valid_life, 0);
+}
+
+/// Verify that Renew response contains correct T1/T2 values per RFC 8415
+#[test]
+fn renew_response_has_correct_t1_t2() {
+    let (config, reservations, leases) = create_env();
+
+    let reservation = reservations
+        .by_mac(RESERVATION_MAC)
+        .expect("No reservation found");
+
+    let mut msg = Message::new(MessageType::Renew);
+    let opts = msg.opts_mut();
+    opts.insert(DhcpOption::ClientId(vec![0xaa, 0xbb, 0xcc]));
+    opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
+    opts.insert(DhcpOption::IANA(IANA {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: {
+            let mut o = DhcpOptions::new();
+            o.insert(DhcpOption::IAAddr(IAAddr {
+                addr: reservation.ipv6_na,
+                preferred_life: 100,
+                valid_life: 200,
+                opts: DhcpOptions::new(),
+            }));
+            o
+        },
+    }));
+    opts.insert(DhcpOption::IAPD(IAPD {
+        id: 2,
+        t1: 0,
+        t2: 0,
+        opts: {
+            let mut o = DhcpOptions::new();
+            o.insert(DhcpOption::IAPrefix(IAPrefix {
+                prefix_ip: reservation.ipv6_pd.addr(),
+                prefix_len: reservation.ipv6_pd.prefix_len(),
+                preferred_lifetime: 100,
+                valid_lifetime: 200,
+                opts: DhcpOptions::new(),
+            }));
+            o
+        },
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected Reply response"),
+    };
+
+    let iana = resp.ia_na().expect("Response missing IA_NA");
+    let iapd = resp.ia_pd().expect("Response missing IA_PD");
+
+    assert_eq!(iana.t1, RENEWAL_TIME, "IA_NA T1 should be RENEWAL_TIME");
+    assert_eq!(iana.t2, REBINDING_TIME, "IA_NA T2 should be REBINDING_TIME");
+    assert_eq!(iapd.t1, RENEWAL_TIME, "IA_PD T1 should be RENEWAL_TIME");
+    assert_eq!(iapd.t2, REBINDING_TIME, "IA_PD T2 should be REBINDING_TIME");
 }

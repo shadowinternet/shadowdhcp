@@ -14,7 +14,7 @@ use tracing::{debug, error, field, info, instrument, Span};
 use crate::v6::{
     extensions::{ShadowMessageExtV6, ShadowRelayMessageExtV6},
     reservation::find_reservation,
-    PREFERRED_LIFETIME, VALID_LIFETIME,
+    PREFERRED_LIFETIME, REBINDING_TIME, RENEWAL_TIME, VALID_LIFETIME,
 };
 
 /// A DHCPv6 response message produced by the server.
@@ -112,6 +112,10 @@ fn handle_solicit(
                 // client requested rapid commit
                 // https://datatracker.ietf.org/doc/html/rfc8415#section-21.14
                 opts.insert(DhcpOption::RapidCommit)
+            } else {
+                // RFC 8415 Section 21.8: Advertise messages should include a Preference option
+                // Value 255 is the maximum preference, causing client to use this server immediately
+                opts.insert(DhcpOption::Preference(255));
             }
 
             // Reply contains IA_NA address and IA_PD prefix as options.
@@ -131,8 +135,8 @@ fn handle_solicit(
                 // add IA_PD information to Reply message
                 opts.insert(DhcpOption::IAPD(IAPD {
                     id: iapd.id,
-                    t1: PREFERRED_LIFETIME,
-                    t2: VALID_LIFETIME,
+                    t1: RENEWAL_TIME,
+                    t2: REBINDING_TIME,
                     opts: ia_pd_opts,
                 }));
             }
@@ -149,8 +153,8 @@ fn handle_solicit(
                 // add IA_NA information to Reply message
                 opts.insert(DhcpOption::IANA(IANA {
                     id: iana.id,
-                    t1: PREFERRED_LIFETIME,
-                    t2: VALID_LIFETIME,
+                    t1: RENEWAL_TIME,
+                    t2: REBINDING_TIME,
                     opts: ia_na_opts,
                 }));
             }
@@ -215,8 +219,8 @@ fn handle_renew(
                 // add IA_NA information to Reply message
                 reply_opts.insert(DhcpOption::IANA(IANA {
                     id: iana.id,
-                    t1: PREFERRED_LIFETIME,
-                    t2: VALID_LIFETIME,
+                    t1: RENEWAL_TIME,
+                    t2: REBINDING_TIME,
                     opts: ia_na_opts,
                 }));
             }
@@ -233,8 +237,8 @@ fn handle_renew(
                 // add IA_PD information to Reply message
                 reply_opts.insert(DhcpOption::IAPD(IAPD {
                     id: iapd.id,
-                    t1: PREFERRED_LIFETIME,
-                    t2: VALID_LIFETIME,
+                    t1: RENEWAL_TIME,
+                    t2: REBINDING_TIME,
                     opts: ia_pd_opts,
                 }));
             }
@@ -253,40 +257,45 @@ fn handle_renew(
             }
         }
         None => {
-            // if the lease cannot be renewed, set the preferred and valid lifetimes to 0
-            // TODO: optionally include new addresses/prefixes that the client can use
-            reply_opts.insert(DhcpOption::StatusCode(dhcproto::v6::StatusCode {
-                status: dhcproto::v6::Status::NoBinding,
-                msg: "No binding".into(),
-            }));
+            // RFC 8415 Section 18.4.2: If the server cannot find a client entry for the IA,
+            // the server returns the IA containing no addresses/prefixes with a Status Code
+            // option set to NoBinding in the Reply message.
             for opt in msg.opts().iter() {
                 match opt {
                     DhcpOption::IANA(iana) => {
                         let mut iana_new = iana.clone();
-                        let addr: Option<&mut IAAddr> =
-                            iana_new.opts.iter_mut().find_map(|o| match o {
-                                DhcpOption::IAAddr(addr) => Some(addr),
-                                _ => None,
-                            });
-                        if let Some(a) = addr {
-                            a.valid_life = 0;
-                            a.preferred_life = 0;
+                        // Zero out lifetimes for any addresses
+                        for ia_opt in iana_new.opts.iter_mut() {
+                            if let DhcpOption::IAAddr(addr) = ia_opt {
+                                addr.valid_life = 0;
+                                addr.preferred_life = 0;
+                            }
                         }
-
+                        // Add NoBinding status inside the IA option per RFC 8415
+                        iana_new
+                            .opts
+                            .insert(DhcpOption::StatusCode(dhcproto::v6::StatusCode {
+                                status: dhcproto::v6::Status::NoBinding,
+                                msg: "No binding for this IA".into(),
+                            }));
                         reply_opts.insert(DhcpOption::IANA(iana_new));
                     }
                     DhcpOption::IAPD(iapd) => {
                         let mut iapd_new = iapd.clone();
-                        let prefix: Option<&mut IAPrefix> =
-                            iapd_new.opts.iter_mut().find_map(|o| match o {
-                                DhcpOption::IAPrefix(prefix) => Some(prefix),
-                                _ => None,
-                            });
-                        if let Some(p) = prefix {
-                            p.valid_lifetime = 0;
-                            p.preferred_lifetime = 0;
+                        // Zero out lifetimes for any prefixes
+                        for ia_opt in iapd_new.opts.iter_mut() {
+                            if let DhcpOption::IAPrefix(prefix) = ia_opt {
+                                prefix.valid_lifetime = 0;
+                                prefix.preferred_lifetime = 0;
+                            }
                         }
-
+                        // Add NoBinding status inside the IA option per RFC 8415
+                        iapd_new
+                            .opts
+                            .insert(DhcpOption::StatusCode(dhcproto::v6::StatusCode {
+                                status: dhcproto::v6::Status::NoBinding,
+                                msg: "No binding for this IA".into(),
+                            }));
                         reply_opts.insert(DhcpOption::IAPD(iapd_new));
                     }
                     _ => (),
@@ -363,8 +372,8 @@ fn handle_request(
                 // add IA_PD information to Reply message
                 opts.insert(DhcpOption::IAPD(IAPD {
                     id: iapd.id,
-                    t1: PREFERRED_LIFETIME,
-                    t2: VALID_LIFETIME,
+                    t1: RENEWAL_TIME,
+                    t2: REBINDING_TIME,
                     opts: ia_pd_opts,
                 }));
             }
@@ -381,8 +390,8 @@ fn handle_request(
                 // add IA_NA information to Reply message
                 opts.insert(DhcpOption::IANA(IANA {
                     id: iana.id,
-                    t1: PREFERRED_LIFETIME,
-                    t2: VALID_LIFETIME,
+                    t1: RENEWAL_TIME,
+                    t2: REBINDING_TIME,
                     opts: ia_na_opts,
                 }));
             }
@@ -396,6 +405,133 @@ fn handle_request(
         }
         None => DhcpV6Response::NoResponse(NoResponseReason::NoReservation),
     }
+}
+
+/// Handle Rebind messages per RFC 8415 Section 18.4.5
+///
+/// Rebind is similar to Renew, but the client sends it to any available server
+/// (not specifically to the server that originally assigned the lease).
+#[instrument(skip(config, reservations, leases, msg, relay_msg),
+fields(client_id = field::Empty, xid = ?msg.xid()))]
+fn handle_rebind(
+    config: &Config,
+    reservations: &ReservationDb,
+    leases: &LeaseDb,
+    msg: &Message,
+    relay_msg: &RelayMessage,
+) -> DhcpV6Response {
+    // Message MUST include a ClientIdentifier option
+    let client_id = match msg.client_id() {
+        Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
+        None => return DhcpV6Response::NoResponse(NoResponseReason::NoClientId),
+    };
+    Span::current().record("client_id", field::display(&client_id.to_colon_string()));
+    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
+
+    // RFC 8415 Section 18.4.5: Rebind messages should NOT contain a Server Identifier
+    // If present, we can still process it but it's unusual
+    if msg.server_id().is_some() {
+        debug!("Rebind message contains Server ID (unusual but allowed)");
+    }
+
+    let mut reply = Message::new_with_id(MessageType::Reply, msg.xid());
+    let reply_opts = reply.opts_mut();
+
+    let reserved_address = find_reservation(reservations, leases, relay_msg, &client_id);
+    match reserved_address {
+        Some(ref reservation) => {
+            if let Some(iana) = msg.ia_na() {
+                let mut ia_na_opts = DhcpOptions::new();
+                ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
+                    addr: reservation.ipv6_na,
+                    preferred_life: PREFERRED_LIFETIME,
+                    valid_life: VALID_LIFETIME,
+                    opts: DhcpOptions::new(),
+                }));
+                reply_opts.insert(DhcpOption::IANA(IANA {
+                    id: iana.id,
+                    t1: RENEWAL_TIME,
+                    t2: REBINDING_TIME,
+                    opts: ia_na_opts,
+                }));
+            }
+
+            if let Some(iapd) = msg.ia_pd() {
+                let mut ia_pd_opts = DhcpOptions::new();
+                ia_pd_opts.insert(DhcpOption::IAPrefix(IAPrefix {
+                    preferred_lifetime: PREFERRED_LIFETIME,
+                    valid_lifetime: VALID_LIFETIME,
+                    prefix_len: reservation.ipv6_pd.prefix_len(),
+                    prefix_ip: reservation.ipv6_pd.addr(),
+                    opts: DhcpOptions::new(),
+                }));
+                reply_opts.insert(DhcpOption::IAPD(IAPD {
+                    id: iapd.id,
+                    t1: RENEWAL_TIME,
+                    t2: REBINDING_TIME,
+                    opts: ia_pd_opts,
+                }));
+            }
+
+            if reply_opts.iter().count() > 0 {
+                let lease = LeaseV6 {
+                    first_leased: Instant::now(),
+                    last_leased: Instant::now(),
+                    valid: Duration::from_secs(u64::from(VALID_LIFETIME)),
+                    duid: client_id.clone(),
+                    mac: None,
+                };
+                leases.leased_new_v6(reservation, lease);
+            }
+        }
+        None => {
+            // RFC 8415 Section 18.4.5: Same as Renew - return IAs with NoBinding status
+            for opt in msg.opts().iter() {
+                match opt {
+                    DhcpOption::IANA(iana) => {
+                        let mut iana_new = iana.clone();
+                        for ia_opt in iana_new.opts.iter_mut() {
+                            if let DhcpOption::IAAddr(addr) = ia_opt {
+                                addr.valid_life = 0;
+                                addr.preferred_life = 0;
+                            }
+                        }
+                        iana_new
+                            .opts
+                            .insert(DhcpOption::StatusCode(dhcproto::v6::StatusCode {
+                                status: dhcproto::v6::Status::NoBinding,
+                                msg: "No binding for this IA".into(),
+                            }));
+                        reply_opts.insert(DhcpOption::IANA(iana_new));
+                    }
+                    DhcpOption::IAPD(iapd) => {
+                        let mut iapd_new = iapd.clone();
+                        for ia_opt in iapd_new.opts.iter_mut() {
+                            if let DhcpOption::IAPrefix(prefix) = ia_opt {
+                                prefix.valid_lifetime = 0;
+                                prefix.preferred_lifetime = 0;
+                            }
+                        }
+                        iapd_new
+                            .opts
+                            .insert(DhcpOption::StatusCode(dhcproto::v6::StatusCode {
+                                status: dhcproto::v6::Status::NoBinding,
+                                msg: "No binding for this IA".into(),
+                            }));
+                        reply_opts.insert(DhcpOption::IAPD(iapd_new));
+                    }
+                    _ => (),
+                }
+            }
+        }
+    };
+
+    reply_opts.insert(DhcpOption::ServerId(config.v6_server_id.bytes.clone()));
+    reply_opts.insert(DhcpOption::ClientId(client_id.bytes));
+    DhcpV6Response::Message(ResponseMessage {
+        message: reply,
+        reservation: reserved_address,
+    })
 }
 
 pub fn handle_message(
@@ -429,6 +565,9 @@ pub fn handle_message(
         //   within IA_PD options (see Section 21.21) for the delegated prefixes
         //   assigned to the IAs.
         MessageType::Renew => handle_renew(config, reservations, leases, msg, relay_msg),
+        // RFC 8415 Section 18.4.5: Rebind is like Renew but sent to any server
+        // when the client can't reach the original server
+        MessageType::Rebind => handle_rebind(config, reservations, leases, msg, relay_msg),
         _ => {
             error!(
                 "MessageType `{:?}` not implemented by ddhcpv6",
