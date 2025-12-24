@@ -1,0 +1,217 @@
+# Vector configuration for shadow_dhcpv6 analytics and traces
+# Receives DHCP events via TCP and traces via exec, sends to ClickHouse
+
+# =============================================================================
+# Sources
+# =============================================================================
+
+# DHCP events from the analytics module (TCP JSON)
+[sources.dhcp_events]
+type = "socket"
+address = "0.0.0.0:9000"
+mode = "tcp"
+decoding.codec = "json"
+
+# Traces from shadowdhcp stdout (JSON when piped)
+# Run Vector with: vector --config vector.toml
+# The exec source will spawn and manage the shadowdhcp process
+[sources.traces]
+type = "exec"
+mode = "streaming"
+command = ["shadowdhcp", "--configdir", "/etc/shadowdhcp"]
+decoding.codec = "json"
+
+# Alternative: If running shadowdhcp separately and piping to Vector:
+# shadowdhcp --configdir /etc/shadowdhcp 2>&1 | vector --config vector-stdin.toml
+# [sources.traces]
+# type = "stdin"
+# decoding.codec = "json"
+
+# =============================================================================
+# Transforms
+# =============================================================================
+
+# Route DHCP events to appropriate table based on ip_version field
+[transforms.route_by_version]
+type = "route"
+inputs = ["dhcp_events"]
+
+[transforms.route_by_version.route]
+v4 = '.ip_version == "v4"'
+v6 = '.ip_version == "v6"'
+
+# Transform v4 events - convert types for ClickHouse
+[transforms.prepare_v4]
+type = "remap"
+inputs = ["route_by_version.v4"]
+source = '''
+# Add server hostname
+.host_name = get_hostname!()
+
+# Convert bool to int for ClickHouse UInt8
+.success = if .success { 1 } else { 0 }
+
+# Remove the ip_version tag (not needed in separate tables)
+del(.ip_version)
+'''
+
+# Transform v6 events - convert types for ClickHouse
+[transforms.prepare_v6]
+type = "remap"
+inputs = ["route_by_version.v6"]
+source = '''
+# Add server hostname
+.host_name = get_hostname!()
+
+# Convert bool to int for ClickHouse UInt8
+.success = if .success { 1 } else { 0 }
+
+# Remove the ip_version tag (not needed in separate tables)
+del(.ip_version)
+'''
+
+# Transform tracing JSON to OTLP-compatible format for HyperDX
+[transforms.traces_to_otlp]
+type = "remap"
+inputs = ["traces"]
+source = '''
+# Map tracing-subscriber JSON to OTLP log format
+# Input format from tracing-subscriber json():
+# {"timestamp":"2024-01-01T00:00:00.000000Z","level":"INFO","target":"shadow_dhcpv6::v6","fields":{"message":"..."},...}
+
+# Parse timestamp to unix nanoseconds
+.TimestampTime = .timestamp
+.Timestamp = to_unix_timestamp!(parse_timestamp!(.timestamp, "%+"), unit: "nanoseconds")
+del(.timestamp)
+
+# Map level to SeverityText and SeverityNumber (OTLP spec)
+.SeverityText = upcase!(.level)
+.SeverityNumber = if .level == "TRACE" {
+    1
+} else if .level == "DEBUG" {
+    5
+} else if .level == "INFO" {
+    9
+} else if .level == "WARN" {
+    13
+} else if .level == "ERROR" {
+    17
+} else {
+    0
+}
+del(.level)
+
+# Extract message body
+.Body = if exists(.fields.message) {
+    .fields.message
+} else {
+    encode_json(.fields)
+}
+
+# Service identification
+.ServiceName = "shadowdhcp"
+.HostName = get_hostname!()
+
+# Resource attributes (service metadata) - follows OpenTelemetry semantic conventions
+.ResourceAttributes = {
+    "service.name": "shadowdhcp",
+    "service.version": "0.1.0",
+    "host.name": .HostName
+}
+
+# Log attributes (additional context)
+.LogAttributes = {}
+if exists(.target) {
+    .LogAttributes.target = .target
+    del(.target)
+}
+if exists(.threadName) {
+    .LogAttributes."thread.name" = .threadName
+    del(.threadName)
+}
+if exists(.span) {
+    .LogAttributes.span = .span
+    del(.span)
+}
+if exists(.spans) {
+    .LogAttributes.spans = .spans
+    del(.spans)
+}
+
+# Move remaining fields to attributes
+if exists(.fields) {
+    for_each(object!(.fields)) -> |key, value| {
+        if key != "message" {
+            .LogAttributes = set!(.LogAttributes, [key], value)
+        }
+    }
+    del(.fields)
+}
+
+# Optional: TraceId and SpanId (if you add tracing-opentelemetry later)
+# .TraceId = ""
+# .SpanId = ""
+'''
+
+# =============================================================================
+# Sinks
+# =============================================================================
+
+[sinks.clickhouse_v4]
+type = "clickhouse"
+inputs = ["prepare_v4"]
+endpoint = "http://localhost:8123"
+database = "dhcp"
+table = "events_v4"
+skip_unknown_fields = true
+
+# Batch settings for performance
+batch.max_bytes = 10485760  # 10MB
+batch.timeout_secs = 1
+
+# Buffer to disk if ClickHouse is unavailable
+buffer.type = "disk"
+buffer.max_size = 268435488  # 256MB
+buffer.when_full = "block"
+
+[sinks.clickhouse_v6]
+type = "clickhouse"
+inputs = ["prepare_v6"]
+endpoint = "http://localhost:8123"
+database = "dhcp"
+table = "events_v6"
+skip_unknown_fields = true
+
+# Batch settings for performance
+batch.max_bytes = 10485760  # 10MB
+batch.timeout_secs = 1
+
+# Buffer to disk if ClickHouse is unavailable
+buffer.type = "disk"
+buffer.max_size = 268435488  # 256MB
+buffer.when_full = "block"
+
+# OTLP-compatible logs table for HyperDX
+[sinks.clickhouse_logs]
+type = "clickhouse"
+inputs = ["traces_to_otlp"]
+endpoint = "http://localhost:8123"
+database = "dhcp"
+table = "otel_logs"
+skip_unknown_fields = true
+
+batch.max_bytes = 10485760
+batch.timeout_secs = 1
+
+buffer.type = "disk"
+buffer.max_size = 268435488
+buffer.when_full = "block"
+
+# =============================================================================
+# Optional: Console sink for debugging (uncomment to enable)
+# =============================================================================
+
+# [sinks.console_debug]
+# type = "console"
+# inputs = ["traces_to_otlp"]
+# encoding.codec = "json"
