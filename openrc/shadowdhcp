@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# OpenRC init script for shadow_dhcpv6 DHCP server
+
+name="shadowdhcp"
+description="Reservation-only DHCPv4/DHCPv6 server"
+
+command="/usr/local/bin/shadowdhcp"
+command_args="--configdir /etc/shadowdhcp"
+command_background=true
+command_user="shadowdhcp"
+command_group="shadowdhcp"
+
+pidfile="/run/${RC_SVCNAME}.pid"
+
+# Logs go to file - Vector can optionally tail these
+output_log="/var/log/shadowdhcp/shadowdhcp.log"
+error_log="/var/log/shadowdhcp/shadowdhcp.log"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    checkpath --directory --owner shadowdhcp:shadowdhcp --mode 0755 /var/log/shadowdhcp
+}

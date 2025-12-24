@@ -1,0 +1,35 @@
+#!/sbin/openrc-run
+# OpenRC init script for Vector (shadow_dhcpv6 analytics)
+
+name="vector"
+description="Vector observability pipeline for shadow_dhcpv6"
+
+command="/usr/local/bin/vector"
+command_args="--config /etc/vector/vector.toml"
+command_background=true
+command_user="vector"
+command_group="vector"
+
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/vector/vector.log"
+error_log="/var/log/vector/vector.err"
+
+# Load environment variables from conf.d
+: ${CLICKHOUSE_URL:="http://localhost:8123"}
+: ${CLICKHOUSE_USER:="default"}
+: ${CLICKHOUSE_PASSWORD:=""}
+
+export CLICKHOUSE_URL CLICKHOUSE_USER CLICKHOUSE_PASSWORD
+
+depend() {
+    need net
+    after firewall shadowdhcp
+}
+
+start_pre() {
+    checkpath --directory --owner vector:vector --mode 0755 /var/log/vector
+    checkpath --directory --owner vector:vector --mode 0755 /var/lib/vector
+
+    # Validate config before starting
+    "${command}" validate /etc/vector/vector.toml || return 1
+}

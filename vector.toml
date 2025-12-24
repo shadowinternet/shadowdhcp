@@ -1,5 +1,10 @@
 # Vector configuration for shadow_dhcpv6 analytics and traces
 # Receives DHCP events via TCP and traces via exec, sends to ClickHouse
+#
+# Required environment variables:
+#   CLICKHOUSE_URL      - ClickHouse HTTP endpoint (e.g., "http://clickhouse.example.com:8123")
+#   CLICKHOUSE_USER     - ClickHouse username (e.g., "default")
+#   CLICKHOUSE_PASSWORD - ClickHouse password
 
 # =============================================================================
 # Sources
@@ -8,24 +13,17 @@
 # DHCP events from the analytics module (TCP JSON)
 [sources.dhcp_events]
 type = "socket"
-address = "0.0.0.0:9000"
+address = "127.0.0.1:9000"
 mode = "tcp"
 decoding.codec = "json"
 
-# Traces from shadowdhcp stdout (JSON when piped)
-# Run Vector with: vector --config vector.toml
-# The exec source will spawn and manage the shadowdhcp process
+# Traces from shadowdhcp log file (JSON output when not a TTY)
 [sources.traces]
-type = "exec"
-mode = "streaming"
-command = ["shadowdhcp", "--configdir", "/etc/shadowdhcp"]
+type = "file"
+include = ["/var/log/shadowdhcp/shadowdhcp.log"]
+read_from = "end"
 decoding.codec = "json"
-
-# Alternative: If running shadowdhcp separately and piping to Vector:
-# shadowdhcp --configdir /etc/shadowdhcp 2>&1 | vector --config vector-stdin.toml
-# [sources.traces]
-# type = "stdin"
-# decoding.codec = "json"
+ignore_checkpoints = true
 
 # =============================================================================
 # Transforms
@@ -49,7 +47,7 @@ source = '''
 .host_name = get_hostname!()
 
 # Convert bool to int for ClickHouse UInt8
-.success = if .success { 1 } else { 0 }
+.success = if bool!(.success) { 1 } else { 0 }
 
 # Remove the ip_version tag (not needed in separate tables)
 del(.ip_version)
@@ -64,7 +62,7 @@ source = '''
 .host_name = get_hostname!()
 
 # Convert bool to int for ClickHouse UInt8
-.success = if .success { 1 } else { 0 }
+.success = if bool!(.success) { 1 } else { 0 }
 
 # Remove the ip_version tag (not needed in separate tables)
 del(.ip_version)
@@ -81,7 +79,7 @@ source = '''
 
 # Parse timestamp to unix nanoseconds
 .TimestampTime = .timestamp
-.Timestamp = to_unix_timestamp!(parse_timestamp!(.timestamp, "%+"), unit: "nanoseconds")
+.Timestamp = to_unix_timestamp(parse_timestamp!(.timestamp, "%+"), unit: "nanoseconds")
 del(.timestamp)
 
 # Map level to SeverityText and SeverityNumber (OTLP spec)
@@ -160,10 +158,14 @@ if exists(.fields) {
 [sinks.clickhouse_v4]
 type = "clickhouse"
 inputs = ["prepare_v4"]
-endpoint = "http://localhost:8123"
+endpoint = "${CLICKHOUSE_URL}"
 database = "dhcp"
 table = "events_v4"
 skip_unknown_fields = true
+
+auth.strategy = "basic"
+auth.user = "${CLICKHOUSE_USER}"
+auth.password = "${CLICKHOUSE_PASSWORD}"
 
 # Batch settings for performance
 batch.max_bytes = 10485760  # 10MB
@@ -177,10 +179,14 @@ buffer.when_full = "block"
 [sinks.clickhouse_v6]
 type = "clickhouse"
 inputs = ["prepare_v6"]
-endpoint = "http://localhost:8123"
+endpoint = "${CLICKHOUSE_URL}"
 database = "dhcp"
 table = "events_v6"
 skip_unknown_fields = true
+
+auth.strategy = "basic"
+auth.user = "${CLICKHOUSE_USER}"
+auth.password = "${CLICKHOUSE_PASSWORD}"
 
 # Batch settings for performance
 batch.max_bytes = 10485760  # 10MB
@@ -195,10 +201,14 @@ buffer.when_full = "block"
 [sinks.clickhouse_logs]
 type = "clickhouse"
 inputs = ["traces_to_otlp"]
-endpoint = "http://localhost:8123"
+endpoint = "${CLICKHOUSE_URL}"
 database = "dhcp"
 table = "otel_logs"
 skip_unknown_fields = true
+
+auth.strategy = "basic"
+auth.user = "${CLICKHOUSE_USER}"
+auth.password = "${CLICKHOUSE_PASSWORD}"
 
 batch.max_bytes = 10485760
 batch.timeout_secs = 1
@@ -206,6 +216,12 @@ batch.timeout_secs = 1
 buffer.type = "disk"
 buffer.max_size = 268435488
 buffer.when_full = "block"
+
+# Drop unmatched events (neither v4 nor v6) - silences routing warning
+[sinks.drop_unmatched]
+type = "blackhole"
+inputs = ["route_by_version._unmatched"]
+print_interval_secs = 0
 
 # =============================================================================
 # Optional: Console sink for debugging (uncomment to enable)
