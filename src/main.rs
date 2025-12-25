@@ -2,6 +2,7 @@ use std::{
     path::PathBuf,
     sync::{mpsc, Arc},
     thread,
+    time::Duration,
 };
 
 use arc_swap::ArcSwap;
@@ -86,6 +87,8 @@ fn main() {
         .unzip();
 
     thread::scope(|s| {
+        let leasedb_cleanup_worker =
+            leases.spawn_cleanup_thread(Duration::from_hours(1), Duration::from_hours(24));
         let (v4db, v4leases, v4config, v4tx) =
             (db.clone(), leases.clone(), config.clone(), tx.clone());
         let v4worker = thread::Builder::new()
@@ -107,6 +110,7 @@ fn main() {
 
         v4worker.join().expect("v4worker join");
         v6worker.join().expect("v6worker join");
+        leasedb_cleanup_worker.join().expect("leasedb cleanup join");
         if let Some(handle) = events_worker {
             handle.join().expect("events join");
         }
