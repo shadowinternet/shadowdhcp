@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use compact_str::CompactString;
 use dhcproto::v4::relay::RelayAgentInformation;
-use shadow_dhcpv6::{
-    extractors::Option82ExtractorFn, reservationdb::ReservationDb, Option82,
-    RelayAgentInformationExt, Reservation,
-};
+use shadow_dhcpv6::{Option82, RelayAgentInformationExt, Reservation};
 use tracing::debug;
+
+use super::extractors::Option82ExtractorFn;
+use crate::reservationdb::ReservationDb;
 
 /// Attempt to find a reservation using Option 82 relay agent information.
 ///

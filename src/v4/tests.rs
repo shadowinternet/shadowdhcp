@@ -3,10 +3,12 @@
 use advmac::MacAddr6;
 use dhcproto::v4::{self, DhcpOption, Flags, Opcode};
 use ipnet::Ipv6Net;
-use shadow_dhcpv6::{
-    config::Config, extractors, leasedb::LeaseDb, reservationdb::ReservationDb, Duid, Option82,
-    Reservation, V4Subnet,
-};
+use shadow_dhcpv6::{Duid, Option82, Reservation, V4Subnet};
+
+use crate::config::Config;
+use crate::leasedb::LeaseDb;
+use crate::reservationdb::ReservationDb;
+use crate::v4::extractors;
 use std::net::Ipv4Addr;
 
 use crate::v4::{

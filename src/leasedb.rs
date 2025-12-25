@@ -4,7 +4,7 @@ use advmac::MacAddr6;
 use dashmap::DashMap;
 use tracing::info;
 
-use crate::{LeaseV4, LeaseV6, Option82, Reservation};
+use shadow_dhcpv6::{LeaseV4, LeaseV6, Option82, Reservation};
 
 /// Wrapper for Option82 with timestamp for expiry tracking
 #[derive(Clone)]
@@ -28,6 +28,7 @@ impl LeaseDb {
             mac_to_opt82: DashMap::new(),
         }
     }
+
     pub fn leased_new_v4(&self, reservation: &Reservation, lease: LeaseV4) {
         self.v4.insert(reservation.clone(), lease);
     }
@@ -124,8 +125,8 @@ impl LeaseDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Duid;
     use ipnet::Ipv6Net;
+    use shadow_dhcpv6::Duid;
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::thread::sleep;
 

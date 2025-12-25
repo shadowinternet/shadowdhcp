@@ -7,7 +7,9 @@ use std::{
 };
 use tracing::{debug, error, info, trace};
 
-use shadow_dhcpv6::{config::Config, leasedb::LeaseDb, reservationdb::ReservationDb};
+use crate::config::Config;
+use crate::leasedb::LeaseDb;
+use crate::reservationdb::ReservationDb;
 
 use crate::{
     analytics::events::{DhcpEvent, DhcpEventV4},

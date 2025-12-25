@@ -3,7 +3,7 @@ use std::{hash::Hash, sync::Arc};
 use advmac::MacAddr6;
 use dashmap::DashMap;
 
-use crate::{Duid, Option1837, Option82, Reservation};
+use shadow_dhcpv6::{Duid, Option1837, Option82, Reservation};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum ReservationKey {

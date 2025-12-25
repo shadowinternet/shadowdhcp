@@ -4,7 +4,7 @@ use advmac::MacAddr6;
 use compact_str::ToCompactString;
 use tracing::{debug, info};
 
-use crate::Option82;
+use shadow_dhcpv6::Option82;
 
 pub type Option82ExtractorFn = fn(opt: &Option82) -> Option<Option82>;
 

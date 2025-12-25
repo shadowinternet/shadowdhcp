@@ -3,9 +3,11 @@ use dhcproto::v4::{self, DhcpOption, Flags};
 use std::{net::Ipv4Addr, sync::Arc};
 use tracing::{debug, error, field, info, instrument, warn, Span};
 
-use shadow_dhcpv6::{
-    config::Config, leasedb::LeaseDb, reservationdb::ReservationDb, Reservation, V4Key,
-};
+use shadow_dhcpv6::{Reservation, V4Key};
+
+use crate::config::Config;
+use crate::leasedb::LeaseDb;
+use crate::reservationdb::ReservationDb;
 
 use crate::v4::{
     extensions::ShadowMessageExtV4, reservation::find_reservation_by_relay_info,

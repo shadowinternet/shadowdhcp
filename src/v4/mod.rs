@@ -1,4 +1,5 @@
 pub mod extensions;
+pub mod extractors;
 pub mod handlers;
 mod reservation;
 pub mod worker;

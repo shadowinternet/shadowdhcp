@@ -6,14 +6,18 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use shadow_dhcpv6::{
-    config::Config, extractors, leasedb::LeaseDb, logging, reservationdb::ReservationDb,
-    Reservation,
-};
+use shadow_dhcpv6::{logging, Reservation};
 
 use crate::analytics::events::DhcpEvent;
+use crate::config::Config;
+use crate::leasedb::LeaseDb;
+use crate::reservationdb::ReservationDb;
+use crate::v4::extractors;
 
 mod analytics;
+mod config;
+mod leasedb;
+mod reservationdb;
 mod v4;
 mod v6;
 

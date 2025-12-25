@@ -6,10 +6,8 @@ use std::{
     str::FromStr,
 };
 
-use crate::{
-    extractors::{self, Option82ExtractorFn},
-    Duid, V4Subnet,
-};
+use crate::v4::extractors::{self, Option82ExtractorFn};
+use shadow_dhcpv6::{Duid, V4Subnet};
 
 pub struct Config {
     pub v4_server_id: Ipv4Addr,
