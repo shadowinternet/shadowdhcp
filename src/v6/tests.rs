@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::leasedb::LeaseDb;
 use crate::reservationdb::ReservationDb;
 use crate::v4::extractors;
+use crate::v6::extractors as v6_extractors;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::v6::{
@@ -34,6 +35,7 @@ fn create_env() -> (Config, ReservationDb, LeaseDb) {
         }],
         v6_server_id: Duid::from(vec![0, 1, 2, 3]),
         option82_extractors: vec![],
+        option1837_extractors: v6_extractors::get_all_extractors().into_values().collect(),
         log_level: tracing::Level::INFO,
         events_address: None,
     };
@@ -750,6 +752,7 @@ fn mikrotik_relay_reply_server_reply_to_client() {
     println!("{msg:?}");
 }
 
+// TODO: remove this and use create_env above
 fn basic_config() -> Config {
     let subnets_v4 = vec![
         V4Subnet {
@@ -771,6 +774,7 @@ fn basic_config() -> Config {
         subnets_v4,
         v6_server_id,
         option82_extractors: extractors::get_all_extractors().into_values().collect(),
+        option1837_extractors: v6_extractors::get_all_extractors().into_values().collect(),
         log_level: tracing::Level::DEBUG,
         events_address: None,
     }

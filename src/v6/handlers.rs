@@ -94,7 +94,13 @@ fn handle_solicit(
         MessageType::Advertise
     };
 
-    let reserved_address = find_reservation(reservations, leases, &[], relay_msg, &client_id);
+    let reserved_address = find_reservation(
+        reservations,
+        leases,
+        &config.option1837_extractors,
+        relay_msg,
+        &client_id,
+    );
     match reserved_address {
         Some(reservation) => {
             let lease = LeaseV6 {
@@ -205,7 +211,13 @@ fn handle_renew(
     let mut reply = Message::new_with_id(MessageType::Reply, msg.xid());
     let reply_opts = reply.opts_mut();
 
-    let reserved_address = find_reservation(reservations, leases, &[], relay_msg, &client_id);
+    let reserved_address = find_reservation(
+        reservations,
+        leases,
+        &config.option1837_extractors,
+        relay_msg,
+        &client_id,
+    );
     match reserved_address {
         Some(ref reservation) => {
             // check if our server reservation matches what the client sent
@@ -341,7 +353,13 @@ fn handle_request(
         None => return DhcpV6Response::NoResponse(NoResponseReason::NoServerId),
     }
 
-    let reserved_address = find_reservation(reservations, leases, &[], relay_msg, &client_id);
+    let reserved_address = find_reservation(
+        reservations,
+        leases,
+        &config.option1837_extractors,
+        relay_msg,
+        &client_id,
+    );
     match reserved_address {
         Some(reservation) => {
             let lease = LeaseV6 {
@@ -439,7 +457,13 @@ fn handle_rebind(
     let mut reply = Message::new_with_id(MessageType::Reply, msg.xid());
     let reply_opts = reply.opts_mut();
 
-    let reserved_address = find_reservation(reservations, leases, &[], relay_msg, &client_id);
+    let reserved_address = find_reservation(
+        reservations,
+        leases,
+        &config.option1837_extractors,
+        relay_msg,
+        &client_id,
+    );
     match reserved_address {
         Some(ref reservation) => {
             if let Some(iana) = msg.ia_na() {

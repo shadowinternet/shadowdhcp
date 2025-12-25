@@ -1,5 +1,6 @@
 use advmac::MacAddr6;
 use dhcproto::v4::{self, DhcpOption, Flags};
+use std::time::Duration;
 use std::{net::Ipv4Addr, sync::Arc};
 use tracing::{debug, error, field, info, instrument, warn, Span};
 
@@ -305,10 +306,16 @@ fn handle_request(
         // TODO: add support for parameter request list option
         opts.insert(DhcpOption::End);
 
-        // if option82, update the option82 to MAC address mapping:
-        if let Some(V4Key::Option82(opt)) = reservation.v4_key() {
-            leases.insert_mac_option82_binding(&mac_addr, &opt);
-        }
+        let opt82 = match reservation.v4_key() {
+            Some(V4Key::Option82(opt)) => Some(opt),
+            _ => None,
+        };
+        leases.lease_v4(
+            &reservation,
+            mac_addr,
+            opt82,
+            Duration::from_secs(u64::from(ADDRESS_LEASE_TIME)),
+        );
     } else {
         warn!(reservation_ipv4 = %reservation.ipv4, %client_requested_ip,
             "client requested ip doesn't match reserved address, sending DHCPNAK",

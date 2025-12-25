@@ -29,8 +29,29 @@ impl LeaseDb {
         }
     }
 
-    pub fn leased_new_v4(&self, reservation: &Reservation, lease: LeaseV4) {
-        self.v4.insert(reservation.clone(), lease);
+    pub fn lease_v4(
+        &self,
+        reservation: &Reservation,
+        mac: MacAddr6,
+        option82: Option<Option82>,
+        valid: Duration,
+    ) {
+        if let Some(ref opt) = option82 {
+            self.insert_mac_option82_binding(&mac, &opt);
+        }
+
+        let now = Instant::now();
+
+        self.v4
+            .entry(reservation.to_owned())
+            .and_modify(|entry| entry.last_leased = now)
+            .or_insert_with(|| LeaseV4 {
+                first_leased: now,
+                last_leased: now,
+                valid,
+                mac,
+                option82: option82,
+            });
     }
 
     pub fn leased_new_v6(&self, reservation: &Reservation, lease: LeaseV6) {
@@ -182,15 +203,11 @@ mod tests {
         let db = LeaseDb::new();
 
         // Add expired and fresh v4 leases
-        db.leased_new_v4(
+        db.lease_v4(
             &test_reservation(1),
-            LeaseV4 {
-                first_leased: Instant::now(),
-                last_leased: Instant::now(),
-                valid: Duration::from_millis(5),
-                mac: test_mac(0x01),
-                option82: None,
-            },
+            test_mac(0x01),
+            None,
+            Duration::from_millis(5),
         );
 
         // Add expired and fresh v6 leases
@@ -208,16 +225,13 @@ mod tests {
         sleep(Duration::from_millis(10));
 
         // Add fresh leases after sleep
-        db.leased_new_v4(
+        db.lease_v4(
             &test_reservation(3),
-            LeaseV4 {
-                first_leased: Instant::now(),
-                last_leased: Instant::now(),
-                valid: Duration::from_secs(3600),
-                mac: test_mac(0x02),
-                option82: None,
-            },
+            test_mac(0x02),
+            None,
+            Duration::from_millis(3600),
         );
+
         db.leased_new_v6(
             &test_reservation(4),
             LeaseV6 {

@@ -6,7 +6,8 @@ use std::{
     str::FromStr,
 };
 
-use crate::v4::extractors::{self, Option82ExtractorFn};
+use crate::v4::extractors::{self as v4_extractors, Option82ExtractorFn};
+use crate::v6::extractors::{self as v6_extractors, Option1837ExtractorFn};
 use shadow_dhcpv6::{Duid, V4Subnet};
 
 pub struct Config {
@@ -15,6 +16,7 @@ pub struct Config {
     pub subnets_v4: Vec<V4Subnet>,
     pub v6_server_id: Duid,
     pub option82_extractors: Vec<Option82ExtractorFn>,
+    pub option1837_extractors: Vec<Option1837ExtractorFn>,
     pub log_level: tracing::Level,
     pub events_address: Option<SocketAddr>,
 }
@@ -24,7 +26,10 @@ pub struct Config {
 struct ServerConfig {
     dns_v4: Vec<Ipv4Addr>,
     subnets_v4: Vec<V4Subnet>,
+    #[serde(default)]
     option82_extractors: Vec<String>,
+    #[serde(default)]
+    option1837_extractors: Vec<String>,
     log_level: Option<String>,
     events_address: Option<SocketAddr>,
 }
@@ -39,6 +44,7 @@ struct ServerIds {
 #[derive(Debug)]
 pub enum ConfigError {
     UnknownOption82Extractor(String),
+    UnknownOption1837Extractor(String),
     Parsing {
         err: serde_json::Error,
         path: PathBuf,
@@ -78,6 +84,9 @@ impl fmt::Display for ConfigError {
             ConfigError::UnknownOption82Extractor(ex) => {
                 write!(f, "Unknown Option82 extractor function `{ex}`")
             }
+            ConfigError::UnknownOption1837Extractor(ex) => {
+                write!(f, "Unknown Option1837 extractor function `{ex}`")
+            }
             ConfigError::Parsing { err, path } => {
                 write!(f, "Parsing `{}`: {err}", path.to_string_lossy())
             }
@@ -107,13 +116,22 @@ impl Config {
         )
         .context(&server_ids_path)?;
 
-        let option82_extractors_map = extractors::get_all_extractors();
-
+        let option82_extractors_map = v4_extractors::get_all_extractors();
         let mut option82_extractors = Vec::with_capacity(server_config.option82_extractors.len());
         for extractor_str in server_config.option82_extractors {
             match option82_extractors_map.get(extractor_str.as_str()) {
                 Some(extractor) => option82_extractors.push(extractor.to_owned()),
                 None => return Err(ConfigError::UnknownOption82Extractor(extractor_str)),
+            }
+        }
+
+        let option1837_extractors_map = v6_extractors::get_all_extractors();
+        let mut option1837_extractors =
+            Vec::with_capacity(server_config.option1837_extractors.len());
+        for extractor_str in server_config.option1837_extractors {
+            match option1837_extractors_map.get(extractor_str.as_str()) {
+                Some(extractor) => option1837_extractors.push(extractor.to_owned()),
+                None => return Err(ConfigError::UnknownOption1837Extractor(extractor_str)),
             }
         }
 
@@ -130,6 +148,7 @@ impl Config {
             subnets_v4: server_config.subnets_v4,
             v6_server_id: server_ids.v6,
             option82_extractors,
+            option1837_extractors,
             log_level,
             events_address: server_config.events_address,
         })
