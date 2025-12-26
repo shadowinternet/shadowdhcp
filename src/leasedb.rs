@@ -1,9 +1,12 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use advmac::MacAddr6;
+use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use tracing::info;
 
+use crate::reservationdb::ReservationDb;
 use shadow_dhcpv6::{LeaseV4, LeaseV6, Option82, Reservation};
 
 /// Wrapper for Option82 with timestamp for expiry tracking
@@ -90,14 +93,21 @@ impl LeaseDb {
     /// Remove expired entries from the LeaseDB.
     ///
     /// - `opt82_max_age`: Maximum age for mac_to_opt82 entries (e.g., 1 day)
-    pub fn evict_expired(&self, opt82_max_age: Duration) {
+    /// - `reservations`: Current reservation database for pruning orphaned bindings
+    pub fn evict_expired(&self, opt82_max_age: Duration, reservations: &ReservationDb) {
         let now = Instant::now();
 
-        // Clean up expired mac -> option82 bindings
+        // Clean up expired mac -> option82 bindings (time-based)
         let opt82_before = self.mac_to_opt82.len();
         self.mac_to_opt82
             .retain(|_mac, entry| now.duration_since(entry.last_seen) < opt82_max_age);
-        let opt82_evicted = opt82_before - self.mac_to_opt82.len();
+        let opt82_expired = opt82_before - self.mac_to_opt82.len();
+
+        // Prune mac_to_opt82 bindings whose Option82 no longer has a reservation
+        let opt82_after_expire = self.mac_to_opt82.len();
+        self.mac_to_opt82
+            .retain(|_mac, entry| reservations.has_opt82(&entry.opt82));
+        let opt82_orphaned = opt82_after_expire - self.mac_to_opt82.len();
 
         // Clean up expired v4 leases
         let v4_before = self.v4.len();
@@ -111,9 +121,10 @@ impl LeaseDb {
             .retain(|_res, lease| now.duration_since(lease.last_leased) < lease.valid);
         let v6_evicted = v6_before - self.v6.len();
 
-        if opt82_evicted > 0 || v4_evicted > 0 || v6_evicted > 0 {
+        if opt82_expired > 0 || opt82_orphaned > 0 || v4_evicted > 0 || v6_evicted > 0 {
             info!(
-                opt82_evicted,
+                opt82_expired,
+                opt82_orphaned,
                 v4_evicted,
                 v6_evicted,
                 opt82_remaining = self.mac_to_opt82.len(),
@@ -131,13 +142,14 @@ impl LeaseDb {
         &self,
         interval: Duration,
         opt82_max_age: Duration,
+        reservations: Arc<ArcSwap<ReservationDb>>,
     ) -> std::thread::JoinHandle<()> {
         let db = self.clone();
         std::thread::Builder::new()
             .name("leasedb-cleanup".into())
             .spawn(move || loop {
                 std::thread::sleep(interval);
-                db.evict_expired(opt82_max_age);
+                db.evict_expired(opt82_max_age, &reservations.load());
             })
             .expect("failed to spawn leasedb cleanup thread")
     }
@@ -175,9 +187,28 @@ mod tests {
         MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, last_octet])
     }
 
+    fn empty_reservations() -> ReservationDb {
+        ReservationDb::new()
+    }
+
+    fn reservations_with_opt82(opt82: Option82) -> ReservationDb {
+        let db = ReservationDb::new();
+        db.load_reservations(vec![Reservation {
+            ipv4: Ipv4Addr::new(10, 0, 0, 1),
+            ipv6_na: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
+            ipv6_pd: "2001:db8:1::/48".parse::<Ipv6Net>().unwrap(),
+            mac: None,
+            duid: None,
+            option82: Some(opt82),
+            option1837: None,
+        }]);
+        db
+    }
+
     #[test]
     fn evict_expired_opt82() {
         let db = LeaseDb::new();
+        let reservations = reservations_with_opt82(test_option82());
         let mac_old = test_mac(0x01);
         let mac_fresh = test_mac(0x02);
 
@@ -186,7 +217,7 @@ mod tests {
         db.insert_mac_option82_binding(&mac_fresh, &test_option82());
 
         // Evict entries older than 5ms
-        db.evict_expired(Duration::from_millis(5));
+        db.evict_expired(Duration::from_millis(5), &reservations);
 
         assert!(
             db.get_opt82_by_mac(&mac_old).is_none(),
@@ -201,6 +232,7 @@ mod tests {
     #[test]
     fn evict_expired_leases() {
         let db = LeaseDb::new();
+        let reservations = empty_reservations();
 
         // Add expired and fresh v4 leases
         db.lease_v4(
@@ -243,7 +275,7 @@ mod tests {
             },
         );
 
-        db.evict_expired(Duration::from_secs(3600));
+        db.evict_expired(Duration::from_secs(3600), &reservations);
 
         assert_eq!(db.v4.len(), 1, "expired v4 lease should be evicted");
         assert_eq!(db.v6.len(), 1, "expired v6 lease should be evicted");
@@ -252,6 +284,7 @@ mod tests {
     #[test]
     fn insert_mac_option82_updates_last_seen() {
         let db = LeaseDb::new();
+        let reservations = reservations_with_opt82(test_option82());
         let mac = test_mac(0x20);
 
         db.insert_mac_option82_binding(&mac, &test_option82());
@@ -261,7 +294,41 @@ mod tests {
         db.insert_mac_option82_binding(&mac, &test_option82());
 
         // Should survive eviction since we just updated it
-        db.evict_expired(Duration::from_millis(5));
+        db.evict_expired(Duration::from_millis(5), &reservations);
         assert!(db.get_opt82_by_mac(&mac).is_some());
+    }
+
+    #[test]
+    fn evict_orphaned_opt82_bindings() {
+        let db = LeaseDb::new();
+        let valid_opt82 = test_option82();
+        let orphan_opt82 = Option82 {
+            circuit: Some("orphan".into()),
+            remote: None,
+            subscriber: None,
+        };
+
+        // Reservation only has valid_opt82, not orphan_opt82
+        let reservations = reservations_with_opt82(valid_opt82.clone());
+
+        let valid_mac = test_mac(0x01);
+        let orphan_mac = test_mac(0x02);
+
+        db.insert_mac_option82_binding(&valid_mac, &valid_opt82);
+        db.insert_mac_option82_binding(&orphan_mac, &orphan_opt82);
+
+        assert_eq!(db.mac_to_opt82.len(), 2);
+
+        // Evict with long max age so time-based eviction doesn't trigger
+        db.evict_expired(Duration::from_secs(3600), &reservations);
+
+        assert!(
+            db.get_opt82_by_mac(&valid_mac).is_some(),
+            "binding with valid reservation should remain"
+        );
+        assert!(
+            db.get_opt82_by_mac(&orphan_mac).is_none(),
+            "binding without reservation should be pruned"
+        );
     }
 }

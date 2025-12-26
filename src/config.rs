@@ -19,6 +19,7 @@ pub struct Config {
     pub option1837_extractors: Vec<Option1837ExtractorFn>,
     pub log_level: tracing::Level,
     pub events_address: Option<SocketAddr>,
+    pub mgmt_address: Option<SocketAddr>,
 }
 
 /// Server wide configuration
@@ -32,6 +33,7 @@ struct ServerConfig {
     option1837_extractors: Vec<String>,
     log_level: Option<String>,
     events_address: Option<SocketAddr>,
+    mgmt_address: Option<SocketAddr>,
 }
 
 /// Server IDs stored in separate file that may be auto generated in the future
@@ -151,6 +153,7 @@ impl Config {
             option1837_extractors,
             log_level,
             events_address: server_config.events_address,
+            mgmt_address: server_config.mgmt_address,
         })
     }
 }

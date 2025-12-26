@@ -38,6 +38,7 @@ fn create_env() -> (Config, ReservationDb, LeaseDb) {
         option1837_extractors: v6_extractors::get_all_extractors().into_values().collect(),
         log_level: tracing::Level::INFO,
         events_address: None,
+        mgmt_address: None,
     };
 
     let reservation = Reservation {
@@ -777,6 +778,7 @@ fn basic_config() -> Config {
         option1837_extractors: v6_extractors::get_all_extractors().into_values().collect(),
         log_level: tracing::Level::DEBUG,
         events_address: None,
+        mgmt_address: None,
     }
 }
 

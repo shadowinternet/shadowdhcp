@@ -76,6 +76,18 @@ impl ReservationDb {
             .get(&ReservationKey::Opt1837(opt.clone()))
             .map(|r| Arc::clone(r.value()))
     }
+
+    /// Check if a reservation exists for the given Option82
+    pub fn has_opt82(&self, opt82: &Option82) -> bool {
+        self.inner
+            .contains_key(&ReservationKey::Opt82(opt82.clone()))
+    }
+
+    /// Returns the number of entries in the database.
+    /// Note: A single reservation may have multiple keys (MAC, DUID, Option82, etc.)
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
 }
 
 #[cfg(test)]

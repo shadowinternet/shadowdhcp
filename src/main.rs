@@ -17,7 +17,10 @@ use crate::v4::extractors;
 mod analytics;
 mod config;
 mod leasedb;
+mod mgmt;
 mod reservationdb;
+#[cfg(unix)]
+mod signal;
 mod v4;
 mod v6;
 
@@ -84,15 +87,23 @@ fn main() {
     let db = Arc::new(ArcSwap::from_pointee(db));
     let leases = Arc::new(LeaseDb::new());
 
-    let events_address = config.load().events_address;
+    let loaded_config = config.load();
+    let events_address = loaded_config.events_address;
+    let mgmt_address = loaded_config.mgmt_address;
+    drop(loaded_config);
+
     let (tx, rx) = events_address
         .as_ref()
         .map(|_| mpsc::channel::<DhcpEvent>())
         .unzip();
 
+    // Spawn SIGHUP handler (Unix only, before thread::scope since it runs forever)
+    #[cfg(unix)]
+    let _sighup_handler = signal::spawn_sighup_handler(db.clone(), config_dir.clone());
+
     thread::scope(|s| {
         let leasedb_cleanup_worker =
-            leases.spawn_cleanup_thread(Duration::from_hours(1), Duration::from_hours(24));
+            leases.spawn_cleanup_thread(Duration::from_hours(1), Duration::from_hours(24), db.clone());
         let (v4db, v4leases, v4config, v4tx) =
             (db.clone(), leases.clone(), config.clone(), tx.clone());
         let v4worker = thread::Builder::new()
@@ -100,9 +111,11 @@ fn main() {
             .spawn_scoped(s, move || v4::v4_worker(v4db, v4leases, v4config, v4tx))
             .expect("v4worker spawn");
 
+        let (v6db, v6leases, v6config, v6tx) =
+            (db.clone(), leases.clone(), config.clone(), tx.clone());
         let v6worker = thread::Builder::new()
             .name("v6worker".to_string())
-            .spawn_scoped(s, move || v6::v6_worker(db, leases, config, tx))
+            .spawn_scoped(s, move || v6::v6_worker(v6db, v6leases, v6config, v6tx))
             .expect("v6worker spawn");
 
         let events_worker = events_address.zip(rx).map(|(addr, rx)| {
@@ -112,11 +125,24 @@ fn main() {
                 .expect("events spawn")
         });
 
+        // Spawn management interface listener if configured
+        let mgmt_worker = mgmt_address.map(|addr| {
+            let mgmt_db = db.clone();
+            let mgmt_config_dir = config_dir.clone();
+            thread::Builder::new()
+                .name("mgmt".to_string())
+                .spawn_scoped(s, move || mgmt::listener(mgmt_db, mgmt_config_dir, addr))
+                .expect("mgmt spawn")
+        });
+
         v4worker.join().expect("v4worker join");
         v6worker.join().expect("v6worker join");
         leasedb_cleanup_worker.join().expect("leasedb cleanup join");
         if let Some(handle) = events_worker {
             handle.join().expect("events join");
+        }
+        if let Some(handle) = mgmt_worker {
+            handle.join().expect("mgmt join");
         }
     });
 }
@@ -137,6 +163,18 @@ FLAGS:
 
 OPTIONS:
   --configdir PATH              Sets the directory to read config files from
+
+ENVIRONMENT:
+  SHADOW_DHCP4_BIND             Address:port for DHCPv4 (default: 0.0.0.0:67)
+  SHADOW_DHCP6_BIND             Address:port for DHCPv6 (default: [::]:547)
+
+RUNTIME UPDATES:
+  Reservations can be reloaded at runtime via:
+  - SIGHUP signal: Reloads reservations.json from disk
+  - Management interface (if mgmt_address is set in config.json):
+    echo '{\"command\":\"reload\"}' | nc localhost 8547
+    echo '{\"command\":\"replace\",\"reservations\":[...]}' | nc localhost 8547
+    echo '{\"command\":\"status\"}' | nc localhost 8547
 ";
 
 const HELP_CONFIG: &str = r#"Option82 extractors are run in order from the config file, put the most commonly used extractors first.
@@ -162,8 +200,15 @@ config.json:
         "subscriber_only",
         "circuit_and_remote",
         "remote_first_12"
-    ]
+    ],
+    "events_address": "127.0.0.1:9000",
+    "mgmt_address": "127.0.0.1:8547"
 }
+
+Optional fields:
+  - events_address: Address:port for analytics events (JSON over TCP)
+  - mgmt_address: Address:port for management interface (reload/replace reservations)
+  - log_level: One of [trace, debug, info, warn, error] (default: info)
 
 ids.json:
 {

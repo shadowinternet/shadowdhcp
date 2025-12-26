@@ -39,6 +39,7 @@ fn create_test_env() -> (Config, ReservationDb, LeaseDb) {
         option1837_extractors: vec![],
         log_level: tracing::Level::INFO,
         events_address: None,
+        mgmt_address: None,
     };
 
     let reservations = ReservationDb::new();
