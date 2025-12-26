@@ -102,8 +102,11 @@ fn main() {
     let _sighup_handler = signal::spawn_sighup_handler(db.clone(), config_dir.clone());
 
     thread::scope(|s| {
-        let leasedb_cleanup_worker =
-            leases.spawn_cleanup_thread(Duration::from_hours(1), Duration::from_hours(24), db.clone());
+        let leasedb_cleanup_worker = leases.spawn_cleanup_thread(
+            Duration::from_hours(1),
+            Duration::from_hours(24),
+            db.clone(),
+        );
         let (v4db, v4leases, v4config, v4tx) =
             (db.clone(), leases.clone(), config.clone(), tx.clone());
         let v4worker = thread::Builder::new()

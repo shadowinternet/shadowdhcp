@@ -66,11 +66,7 @@ pub fn listener(
     }
 }
 
-fn handle_client(
-    stream: TcpStream,
-    reservations: &Arc<ArcSwap<ReservationDb>>,
-    config_dir: &Path,
-) {
+fn handle_client(stream: TcpStream, reservations: &Arc<ArcSwap<ReservationDb>>, config_dir: &Path) {
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
 
@@ -101,7 +97,9 @@ fn handle_client(
                 reservation_count: None,
             },
         },
-        Ok(MgmtRequest::Replace { reservations: new_res }) => {
+        Ok(MgmtRequest::Replace {
+            reservations: new_res,
+        }) => {
             let count = new_res.len();
             let new_db = ReservationDb::new();
             new_db.load_reservations(new_res);

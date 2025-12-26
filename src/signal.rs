@@ -17,8 +17,7 @@ pub fn spawn_sighup_handler(
     std::thread::Builder::new()
         .name("sighup".to_string())
         .spawn(move || {
-            let mut signals =
-                Signals::new([SIGHUP]).expect("Failed to register SIGHUP handler");
+            let mut signals = Signals::new([SIGHUP]).expect("Failed to register SIGHUP handler");
 
             for sig in signals.forever() {
                 if sig == SIGHUP {
