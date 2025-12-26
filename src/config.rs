@@ -10,6 +10,7 @@ use crate::v4::extractors::{self as v4_extractors, Option82ExtractorFn};
 use crate::v6::extractors::{self as v6_extractors, Option1837ExtractorFn};
 use shadow_dhcpv6::{Duid, V4Subnet};
 
+/// Server wide configuration
 pub struct Config {
     pub v4_server_id: Ipv4Addr,
     pub dns_v4: Vec<Ipv4Addr>,
@@ -20,9 +21,12 @@ pub struct Config {
     pub log_level: tracing::Level,
     pub events_address: Option<SocketAddr>,
     pub mgmt_address: Option<SocketAddr>,
+    pub v4_bind_address: SocketAddr,
+    pub v6_bind_address: SocketAddr,
 }
 
-/// Server wide configuration
+/// Server wide configuration, used to deserialize the config.json file before
+/// transforming to `Config`
 #[derive(Deserialize)]
 struct ServerConfig {
     dns_v4: Vec<Ipv4Addr>,
@@ -34,6 +38,8 @@ struct ServerConfig {
     log_level: Option<String>,
     events_address: Option<SocketAddr>,
     mgmt_address: Option<SocketAddr>,
+    v4_bind_address: Option<SocketAddr>,
+    v6_bind_address: Option<SocketAddr>,
 }
 
 /// Server IDs stored in separate file that may be auto generated in the future
@@ -103,6 +109,24 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            v4_server_id: Ipv4Addr::UNSPECIFIED,
+            dns_v4: vec![],
+            subnets_v4: vec![],
+            v6_server_id: Duid::default(),
+            option82_extractors: vec![],
+            option1837_extractors: vec![],
+            log_level: tracing::Level::INFO,
+            events_address: None,
+            mgmt_address: None,
+            v4_bind_address: "0.0.0.0:67".parse().unwrap(),
+            v6_bind_address: "[::]:547".parse().unwrap(),
+        }
+    }
+}
+
 impl Config {
     /// Load server config from `config.json` and `ids.json` in the current directory
     pub fn load_from_files<P: AsRef<Path>>(config_dir: P) -> Result<Config, ConfigError> {
@@ -154,6 +178,12 @@ impl Config {
             log_level,
             events_address: server_config.events_address,
             mgmt_address: server_config.mgmt_address,
+            v4_bind_address: server_config
+                .v4_bind_address
+                .unwrap_or_else(|| "0.0.0.0:67".parse().unwrap()),
+            v6_bind_address: server_config
+                .v6_bind_address
+                .unwrap_or_else(|| "[::]:547".parse().unwrap()),
         })
     }
 }

@@ -28,17 +28,13 @@ const RESERVATION_MAC: MacAddr6 = MacAddr6::new([0, 1, 2, 3, 4, 5]);
 fn create_env() -> (Config, ReservationDb, LeaseDb) {
     let config = Config {
         v4_server_id: Ipv4Addr::new(1, 1, 1, 1),
-        dns_v4: vec![],
         subnets_v4: vec![V4Subnet {
             net: "192.168.0.0/24".parse().unwrap(),
             gateway: "192.168.0.1".parse().unwrap(),
         }],
         v6_server_id: Duid::from(vec![0, 1, 2, 3]),
-        option82_extractors: vec![],
         option1837_extractors: v6_extractors::get_all_extractors().into_values().collect(),
-        log_level: tracing::Level::INFO,
-        events_address: None,
-        mgmt_address: None,
+        ..Default::default()
     };
 
     let reservation = Reservation {
@@ -777,8 +773,7 @@ fn basic_config() -> Config {
         option82_extractors: extractors::get_all_extractors().into_values().collect(),
         option1837_extractors: v6_extractors::get_all_extractors().into_values().collect(),
         log_level: tracing::Level::DEBUG,
-        events_address: None,
-        mgmt_address: None,
+        ..Default::default()
     }
 }
 

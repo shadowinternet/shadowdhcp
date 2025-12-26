@@ -28,8 +28,8 @@ pub fn v6_worker(
     event_channel: Option<mpsc::Sender<DhcpEvent>>,
 ) {
     // only work with relayed messages
-    let bind_addr = std::env::var("SHADOW_DHCP6_BIND").unwrap_or("[::]:547".into());
-    let socket = UdpSocket::bind(&bind_addr).expect("udp bind");
+    let bind_addr = config.load().v6_bind_address;
+    let socket = UdpSocket::bind(bind_addr).expect("udp bind");
     info!("Successfully bound to: {bind_addr}");
     let mut read_buf = [0u8; 2048];
 

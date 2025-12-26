@@ -23,8 +23,8 @@ pub fn v4_worker(
     event_channel: Option<mpsc::Sender<DhcpEvent>>,
 ) {
     let mut read_buf = [0u8; 2048];
-    let bind_addr = std::env::var("SHADOW_DHCP4_BIND").unwrap_or("0.0.0.0:67".into());
-    let socket = UdpSocket::bind(&bind_addr).expect("udp bind");
+    let bind_addr = config.load().v4_bind_address;
+    let socket = UdpSocket::bind(bind_addr).expect("udp bind");
     info!("Successfully bound to: {bind_addr}");
 
     loop {
