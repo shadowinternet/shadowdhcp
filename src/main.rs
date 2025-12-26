@@ -44,7 +44,10 @@ fn main() {
     if args.contains("--available-extractors") {
         let mut extractors: Vec<_> = extractors::get_all_extractors().into_keys().collect();
         extractors.sort_unstable();
-        println!("{}", extractors.join(", "));
+        println!("Option82 (DHCPv4): {}", extractors.join(", "));
+        let mut extractors_v6: Vec<_> = v6::extractors::get_all_extractors().into_keys().collect();
+        extractors_v6.sort_unstable();
+        println!("Option18/37 (DHCPv6): {}", extractors_v6.join(", "));
         return;
     }
     if args.contains("--version") {
@@ -162,14 +165,10 @@ FLAGS:
   -h, --help                    Prints this help information
       --help-config             Configuration file help
       --help-reservations       Reservations file help
-      --available-extractors    Print list of available Option82 extractors
+      --available-extractors    Print list of available extractors for Option82 and Option18/37
 
 OPTIONS:
   --configdir PATH              Sets the directory to read config files from
-
-ENVIRONMENT:
-  SHADOW_DHCP4_BIND             Address:port for DHCPv4 (default: 0.0.0.0:67)
-  SHADOW_DHCP6_BIND             Address:port for DHCPv6 (default: [::]:547)
 
 RUNTIME UPDATES:
   Reservations can be reloaded at runtime via:
@@ -180,7 +179,17 @@ RUNTIME UPDATES:
     echo '{\"command\":\"status\"}' | nc localhost 8547
 ";
 
-const HELP_CONFIG: &str = r#"Option82 extractors are run in order from the config file, put the most commonly used extractors first.
+const HELP_CONFIG: &str = r#"Config files are stored in a directory specified by --config-dir (defaults to current directory):
+  - ids.json contains the DHCPv4 and DHCPv6 server IDs
+  - config.json server wide configuration
+  - reservations.json IP reservations, can be hot reloaded. See --help-reservations
+
+Extractors are run in order from the config file, put the most commonly used extractors first.
+
+Option82 extractors parse DHCPv4 relay agent information (circuit, remote, subscriber fields).
+Option18/37 extractors parse DHCPv6 interface-id (Option 18) and remote-id (Option 37) fields.
+
+Run `shadowdhcp --available-extractors` to see all available extractors.
 
 config.json:
 {
@@ -204,14 +213,23 @@ config.json:
         "circuit_and_remote",
         "remote_first_12"
     ],
+    "option1837_extractors": [
+        "interface_only",
+        "remote_only",
+        "interface_and_remote"
+    ],
     "events_address": "127.0.0.1:9000",
     "mgmt_address": "127.0.0.1:8547"
 }
 
 Optional fields:
+  - option82_extractors: List of DHCPv4 Option82 extractor functions
+  - option1837_extractors: List of DHCPv6 Option18/37 extractor functions
   - events_address: Address:port for analytics events (JSON over TCP)
   - mgmt_address: Address:port for management interface (reload/replace reservations)
   - log_level: One of [trace, debug, info, warn, error] (default: info)
+  - v4_bind_address: Address:port for DHCPv4 (default: 0.0.0.0:67)
+  - v6_bind_address: Address:port for DHCPv6 (default: [::]:547)
 
 ids.json:
 {
@@ -221,17 +239,17 @@ ids.json:
 "#;
 
 const HELP_RESERVATIONS: &str = r#"Reservations must contain:
- * ipv4
- * ipv6_na
- * ipv6_pd
- * At least one source for IPv4 and IPv6. Some sources can be used for both
-   * mac - can be used for both
-   * option82 - can be used for both. Should be formatted in all caps dash format: AA-BB-CC-DD-EE-FF
-   * duid - IPv6 only
+  - ipv4
+  - ipv6_na
+  - ipv6_pd
+  - At least one source for IPv4 and IPv6. Some sources can be used for both
+    - mac - can be used for both
+    - option82 - can be used for both. Should be formatted in all caps dash format: AA-BB-CC-DD-EE-FF
+    - duid - IPv6 only
 
 Reservations with multiple sources will be evaluated in the following order:
 IPv4: mac -> option82
-IPv6: duid -> mac -> option82
+IPv6: duid -> option18/37 -> mac -> option82
 
 reservations.json:
 [

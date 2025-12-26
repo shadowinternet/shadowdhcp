@@ -13,9 +13,18 @@ shadowdhcp:
 * IPv6 IA_NA and IA_PD are required for each reservation
 * Supports dynamic IPv4 Option82 to IPv6 mappings. When a client receives an IPv4 address via Option82, the server remembers their MAC address and can use the MAC to deliver IPv6 address information
 
-## Option82 extractors
+## Extractors
+
+Run `shadowdhcp --available-extractors` to see all available extractors.
+
+### Option82 extractors (DHCPv4)
 
 Multiple extractors are defined and can be enabled in the config file to try and parse Option82 data from the circuit, remote, and subscriber fields.
+
+### Option18/37 extractors (DHCPv6)
+
+Extractors for DHCPv6 interface-id (Option 18) and remote-id (Option 37) fields.
+
 
 ## Example config:
 
@@ -40,9 +49,23 @@ Multiple extractors are defined and can be enabled in the config file to try and
         "subscriber_only",
         "circuit_and_remote",
         "remote_first_12"
+    ],
+    "option1837_extractors": [
+        "interface_only",
+        "remote_only",
+        "interface_and_remote"
     ]
 }
 ```
+
+Optional fields:
+- `option82_extractors`: List of DHCPv4 Option82 extractor functions
+- `option1837_extractors`: List of DHCPv6 Option18/37 extractor functions
+- `events_address`: Address:port for analytics events (JSON over TCP) (e.g., 127.0.0.1:9000)
+- `mgmt_address`: Address:port for management interface (e.g., 127.0.0.1:8547)
+- `log_level`: One of [trace, debug, info, warn, error] (default: info)
+- `v4_bind_address`: Address:port for DHCPv4 (default: 0.0.0.0:67)
+- `v6_bind_address`: Address:port for DHCPv6 (default: [::]:547)
 
 ## Example reservations
 
