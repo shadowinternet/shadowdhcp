@@ -11,6 +11,45 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::v4::extensions::ShadowMessageExtV4;
 use crate::v6::extensions::{ShadowMessageExtV6, ShadowRelayMessageExtV6};
 
+/// Metadata about how a reservation was matched
+#[derive(Debug, Clone, Copy)]
+pub struct ReservationMatch {
+    /// The method used to find the reservation: "mac", "duid", "option82", "option1837"
+    pub method: &'static str,
+    /// The extractor function name that succeeded (for option82/option1837 matches)
+    pub extractor: Option<&'static str>,
+}
+
+impl ReservationMatch {
+    pub fn mac() -> Self {
+        Self {
+            method: "mac",
+            extractor: None,
+        }
+    }
+
+    pub fn duid() -> Self {
+        Self {
+            method: "duid",
+            extractor: None,
+        }
+    }
+
+    pub fn option82(extractor: &'static str) -> Self {
+        Self {
+            method: "option82",
+            extractor: Some(extractor),
+        }
+    }
+
+    pub fn option1837(extractor: &'static str) -> Self {
+        Self {
+            method: "option1837",
+            extractor: Some(extractor),
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(tag = "ip_version")]
 pub enum DhcpEvent {
@@ -40,6 +79,12 @@ pub struct DhcpEventV4 {
     pub reservation_option82_remote: Option<CompactString>,
     pub reservation_option82_subscriber: Option<CompactString>,
 
+    // === Match metadata ===
+    /// How the reservation was matched: "mac", "option82"
+    pub match_method: Option<&'static str>,
+    /// Which extractor function was used (for option82 matches)
+    pub extractor_used: Option<&'static str>,
+
     pub success: bool,
     pub failure_reason: Option<&'static str>,
 }
@@ -66,6 +111,7 @@ impl DhcpEventV4 {
         msg: &v4::Message,
         relay_addr: Ipv4Addr,
         reservation: Option<&Reservation>,
+        reservation_match: Option<ReservationMatch>,
     ) -> Self {
         // Extract option82 from the request message
         let relay_info = msg.relay_agent_information();
@@ -92,6 +138,9 @@ impl DhcpEventV4 {
             reservation_option82_circuit: res_option82.and_then(|o| o.circuit.clone()),
             reservation_option82_remote: res_option82.and_then(|o| o.remote.clone()),
             reservation_option82_subscriber: res_option82.and_then(|o| o.subscriber.clone()),
+            // Match metadata
+            match_method: reservation_match.map(|m| m.method),
+            extractor_used: reservation_match.and_then(|m| m.extractor),
             success: true,
             failure_reason: None,
         }
@@ -121,6 +170,9 @@ impl DhcpEventV4 {
             reservation_option82_circuit: None,
             reservation_option82_remote: None,
             reservation_option82_subscriber: None,
+            // No match
+            match_method: None,
+            extractor_used: None,
             success: false,
             failure_reason: Some(reason),
         }
@@ -165,6 +217,12 @@ pub struct DhcpEventV6 {
     pub reservation_option1837_interface: Option<String>,
     pub reservation_option1837_remote: Option<String>,
 
+    // === Match metadata ===
+    /// How the reservation was matched: "mac", "duid", "option1837"
+    pub match_method: Option<&'static str>,
+    /// Which extractor function was used (for option1837 matches)
+    pub extractor_used: Option<&'static str>,
+
     pub success: bool,
     pub failure_reason: Option<&'static str>,
 }
@@ -202,6 +260,7 @@ impl DhcpEventV6 {
         relay_msg: &v6::RelayMessage,
         relay_addr: Ipv6Addr,
         reservation: Option<&Reservation>,
+        reservation_match: Option<ReservationMatch>,
     ) -> Self {
         let option1837 = relay_msg.option1837();
         let res_option1837 = reservation.and_then(|r| r.option1837.as_ref());
@@ -241,6 +300,9 @@ impl DhcpEventV6 {
                 .and_then(|o| o.interface.as_ref().map(|s| s.to_string())),
             reservation_option1837_remote: res_option1837
                 .and_then(|o| o.remote.as_ref().map(|s| s.to_string())),
+            // Match metadata
+            match_method: reservation_match.map(|m| m.method),
+            extractor_used: reservation_match.and_then(|m| m.extractor),
             success: true,
             failure_reason: None,
         }
@@ -285,6 +347,9 @@ impl DhcpEventV6 {
             reservation_duid: None,
             reservation_option1837_interface: None,
             reservation_option1837_remote: None,
+            // No match
+            match_method: None,
+            extractor_used: None,
             success: false,
             failure_reason: Some(reason),
         }

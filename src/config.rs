@@ -6,8 +6,8 @@ use std::{
     str::FromStr,
 };
 
-use crate::v4::extractors::{self as v4_extractors, Option82ExtractorFn};
-use crate::v6::extractors::{self as v6_extractors, Option1837ExtractorFn};
+use crate::v4::extractors::{self as v4_extractors, NamedOption82Extractor};
+use crate::v6::extractors::{self as v6_extractors, NamedOption1837Extractor};
 use shadow_dhcpv6::{Duid, V4Subnet};
 
 /// Server wide configuration
@@ -16,8 +16,8 @@ pub struct Config {
     pub dns_v4: Vec<Ipv4Addr>,
     pub subnets_v4: Vec<V4Subnet>,
     pub v6_server_id: Duid,
-    pub option82_extractors: Vec<Option82ExtractorFn>,
-    pub option1837_extractors: Vec<Option1837ExtractorFn>,
+    pub option82_extractors: Vec<NamedOption82Extractor>,
+    pub option1837_extractors: Vec<NamedOption1837Extractor>,
     pub log_level: tracing::Level,
     pub events_address: Option<SocketAddr>,
     pub mgmt_address: Option<SocketAddr>,
@@ -145,8 +145,8 @@ impl Config {
         let option82_extractors_map = v4_extractors::get_all_extractors();
         let mut option82_extractors = Vec::with_capacity(server_config.option82_extractors.len());
         for extractor_str in server_config.option82_extractors {
-            match option82_extractors_map.get(extractor_str.as_str()) {
-                Some(extractor) => option82_extractors.push(extractor.to_owned()),
+            match option82_extractors_map.get_key_value(extractor_str.as_str()) {
+                Some((&name, &extractor)) => option82_extractors.push((name, extractor)),
                 None => return Err(ConfigError::UnknownOption82Extractor(extractor_str)),
             }
         }
@@ -155,8 +155,8 @@ impl Config {
         let mut option1837_extractors =
             Vec::with_capacity(server_config.option1837_extractors.len());
         for extractor_str in server_config.option1837_extractors {
-            match option1837_extractors_map.get(extractor_str.as_str()) {
-                Some(extractor) => option1837_extractors.push(extractor.to_owned()),
+            match option1837_extractors_map.get_key_value(extractor_str.as_str()) {
+                Some((&name, &extractor)) => option1837_extractors.push((name, extractor)),
                 None => return Err(ConfigError::UnknownOption1837Extractor(extractor_str)),
             }
         }

@@ -4,6 +4,9 @@ use shadow_dhcpv6::Option1837;
 
 pub type Option1837ExtractorFn = fn(opt: &Option1837) -> Option<Option1837>;
 
+/// A named extractor tuple: (name, function)
+pub type NamedOption1837Extractor = (&'static str, Option1837ExtractorFn);
+
 /// Extract the Interface-ID (Option 18) only if it exists.
 pub fn interface_only(opt: &Option1837) -> Option<Option1837> {
     opt.interface.as_ref().map(|interface| Option1837 {

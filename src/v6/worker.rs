@@ -144,6 +144,7 @@ pub fn v6_worker(
                                         &msg,
                                         relay_addr,
                                         resp.reservation.as_deref(),
+                                        resp.reservation_match,
                                     );
                                     let _ = event_sender.send(DhcpEvent::V6(event));
                                 }

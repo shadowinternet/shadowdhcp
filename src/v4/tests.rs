@@ -35,7 +35,7 @@ fn create_test_env() -> (Config, ReservationDb, LeaseDb) {
             },
         ],
         v6_server_id: Duid::from(vec![0, 1, 2, 3]),
-        option82_extractors: extractors::get_all_extractors().into_values().collect(),
+        option82_extractors: extractors::get_all_extractors().into_iter().collect(),
         ..Default::default()
     };
 

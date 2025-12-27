@@ -8,6 +8,9 @@ use shadow_dhcpv6::Option82;
 
 pub type Option82ExtractorFn = fn(opt: &Option82) -> Option<Option82>;
 
+/// A named extractor tuple: (name, function)
+pub type NamedOption82Extractor = (&'static str, Option82ExtractorFn);
+
 /// Extract the Remote-ID only if it exists.
 pub fn remote_only(opt: &Option82) -> Option<Option82> {
     opt.remote.as_ref().map(|remote| Option82 {

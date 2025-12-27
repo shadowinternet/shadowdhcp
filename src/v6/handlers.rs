@@ -8,6 +8,7 @@ use dhcproto::v6::{
 };
 use shadow_dhcpv6::{LeaseV6, Reservation};
 
+use crate::analytics::events::ReservationMatch;
 use crate::config::Config;
 use crate::leasedb::LeaseDb;
 use crate::reservationdb::ReservationDb;
@@ -26,6 +27,7 @@ use crate::v6::{
 pub struct ResponseMessage {
     pub message: Message,
     pub reservation: Option<Arc<Reservation>>,
+    pub reservation_match: Option<ReservationMatch>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -102,7 +104,7 @@ fn handle_solicit(
         &client_id,
     );
     match reserved_address {
-        Some(reservation) => {
+        Some((reservation, match_info)) => {
             let lease = LeaseV6 {
                 first_leased: Instant::now(),
                 last_leased: Instant::now(),
@@ -172,6 +174,7 @@ fn handle_solicit(
             DhcpV6Response::Message(ResponseMessage {
                 message: reply,
                 reservation: Some(reservation),
+                reservation_match: Some(match_info),
             })
         }
         None => {
@@ -218,8 +221,9 @@ fn handle_renew(
         relay_msg,
         &client_id,
     );
-    match reserved_address {
-        Some(ref reservation) => {
+
+    let (reservation, match_info) = match reserved_address {
+        Some((ref reservation, match_info)) => {
             // check if our server reservation matches what the client sent
             // TODO: should this scan for multiple IANA options?
             if let Some(iana) = msg.ia_na() {
@@ -269,6 +273,7 @@ fn handle_renew(
                 };
                 leases.leased_new_v6(reservation, lease);
             }
+            (Some(reservation.clone()), Some(match_info))
         }
         None => {
             // RFC 8415 Section 18.4.2: If the server cannot find a client entry for the IA,
@@ -315,6 +320,7 @@ fn handle_renew(
                     _ => (),
                 }
             }
+            (None, None)
         }
     };
 
@@ -322,7 +328,8 @@ fn handle_renew(
     reply_opts.insert(DhcpOption::ClientId(client_id.bytes));
     DhcpV6Response::Message(ResponseMessage {
         message: reply,
-        reservation: reserved_address,
+        reservation,
+        reservation_match: match_info,
     })
 }
 
@@ -361,7 +368,7 @@ fn handle_request(
         &client_id,
     );
     match reserved_address {
-        Some(reservation) => {
+        Some((reservation, match_info)) => {
             let lease = LeaseV6 {
                 first_leased: Instant::now(),
                 last_leased: Instant::now(),
@@ -421,6 +428,7 @@ fn handle_request(
             DhcpV6Response::Message(ResponseMessage {
                 message: reply,
                 reservation: Some(reservation),
+                reservation_match: Some(match_info),
             })
         }
         None => DhcpV6Response::NoResponse(NoResponseReason::NoReservation),
@@ -464,8 +472,9 @@ fn handle_rebind(
         relay_msg,
         &client_id,
     );
-    match reserved_address {
-        Some(ref reservation) => {
+
+    let (reservation, match_info) = match reserved_address {
+        Some((ref reservation, match_info)) => {
             if let Some(iana) = msg.ia_na() {
                 let mut ia_na_opts = DhcpOptions::new();
                 ia_na_opts.insert(DhcpOption::IAAddr(IAAddr {
@@ -509,6 +518,7 @@ fn handle_rebind(
                 };
                 leases.leased_new_v6(reservation, lease);
             }
+            (Some(reservation.clone()), Some(match_info))
         }
         None => {
             // RFC 8415 Section 18.4.5: Same as Renew - return IAs with NoBinding status
@@ -549,6 +559,7 @@ fn handle_rebind(
                     _ => (),
                 }
             }
+            (None, None)
         }
     };
 
@@ -556,7 +567,8 @@ fn handle_rebind(
     reply_opts.insert(DhcpOption::ClientId(client_id.bytes));
     DhcpV6Response::Message(ResponseMessage {
         message: reply,
-        reservation: reserved_address,
+        reservation,
+        reservation_match: match_info,
     })
 }
 

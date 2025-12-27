@@ -32,7 +32,7 @@ fn create_env() -> (Config, ReservationDb, LeaseDb) {
             gateway: "192.168.0.1".parse().unwrap(),
         }],
         v6_server_id: Duid::from(vec![0, 1, 2, 3]),
-        option1837_extractors: v6_extractors::get_all_extractors().into_values().collect(),
+        option1837_extractors: v6_extractors::get_all_extractors().into_iter().collect(),
         ..Default::default()
     };
 

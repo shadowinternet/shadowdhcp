@@ -6,13 +6,14 @@ use tracing::{debug, error, field, info, instrument, warn, Span};
 
 use shadow_dhcpv6::{Reservation, V4Key};
 
+use crate::analytics::events::ReservationMatch;
 use crate::config::Config;
 use crate::leasedb::LeaseDb;
 use crate::reservationdb::ReservationDb;
 
 use crate::v4::{
-    extensions::ShadowMessageExtV4, reservation::find_reservation_by_relay_info,
-    ADDRESS_LEASE_TIME, REBINDING_TIME, RENEWAL_TIME,
+    extensions::ShadowMessageExtV4, reservation::find_reservation, ADDRESS_LEASE_TIME,
+    REBINDING_TIME, RENEWAL_TIME,
 };
 
 /// A DHCPv4 response message produced by the server.
@@ -22,6 +23,7 @@ use crate::v4::{
 pub struct ResponseMessage {
     pub message: v4::Message,
     pub reservation: Option<Arc<Reservation>>,
+    pub reservation_match: Option<ReservationMatch>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -107,24 +109,22 @@ fn handle_discover(
     config: &Config,
     msg: &v4::Message,
 ) -> DhcpV4Response {
-    // get client hwaddr, or option82 key
     let mac_addr = match MacAddr6::try_from(msg.chaddr()).ok() {
         Some(ma) => ma,
         None => return DhcpV4Response::NoResponse(NoResponseReason::NoValidMac),
     };
     Span::current().record("mac", field::display(mac_addr));
-    let relay = msg.relay_agent_information();
     info!("DHCPDiscover");
 
-    // MAC reservations are higher priority than Option82:
-    let reservation = match reservations
-        .by_mac(mac_addr)
-        .or(relay.and_then(|relay_info| {
-            find_reservation_by_relay_info(reservations, &config.option82_extractors, relay_info)
-        })) {
-        Some(r) => {
-            info!(ipv4 = %r.ipv4, "Found reservation for IP");
-            r
+    let (reservation, match_info) = match find_reservation(
+        reservations,
+        &config.option82_extractors,
+        mac_addr,
+        msg.relay_agent_information(),
+    ) {
+        Some((res, match_info)) => {
+            info!(ipv4 = %res.ipv4, method = match_info.method, "Found reservation");
+            (res, match_info)
         }
         None => {
             info!("No reservation found");
@@ -174,6 +174,7 @@ fn handle_discover(
     DhcpV4Response::Message(ResponseMessage {
         message: reply,
         reservation: Some(reservation),
+        reservation_match: Some(match_info),
     })
 }
 
@@ -211,19 +212,18 @@ fn handle_request(
         Some(ma) => ma,
         None => return DhcpV4Response::NoResponse(NoResponseReason::NoValidMac),
     };
-    let relay = msg.relay_agent_information();
     Span::current().record("mac", field::display(mac_addr));
     info!("DHCPRequest");
 
-    // MAC reservations are higher priority than Option82:
-    let reservation = match reservations
-        .by_mac(mac_addr)
-        .or(relay.and_then(|relay_info| {
-            find_reservation_by_relay_info(reservations, &config.option82_extractors, relay_info)
-        })) {
-        Some(r) => {
-            info!(ipv4 = %r.ipv4, "Found reservation for IP");
-            r
+    let (reservation, match_info) = match find_reservation(
+        reservations,
+        &config.option82_extractors,
+        mac_addr,
+        msg.relay_agent_information(),
+    ) {
+        Some((res, match_info)) => {
+            info!(ipv4 = %res.ipv4, method = match_info.method, "Found reservation");
+            (res, match_info)
         }
         None => {
             info!("No reservation found");
@@ -336,5 +336,6 @@ fn handle_request(
     DhcpV4Response::Message(ResponseMessage {
         message: reply,
         reservation: Some(reservation),
+        reservation_match: Some(match_info),
     })
 }
