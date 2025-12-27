@@ -1,4 +1,4 @@
-use arc_swap::ArcSwapAny;
+use arc_swap::ArcSwap;
 use dhcproto::{v4, Decodable, Encodable};
 use std::{
     io,
@@ -17,9 +17,9 @@ use crate::{
 };
 
 pub fn v4_worker(
-    reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
+    reservations: Arc<ArcSwap<ReservationDb>>,
     leases: Arc<LeaseDb>,
-    config: Arc<ArcSwapAny<Arc<Config>>>,
+    config: Arc<ArcSwap<Config>>,
     event_channel: Option<mpsc::Sender<DhcpEvent>>,
 ) {
     let mut read_buf = [0u8; 2048];

@@ -1,4 +1,4 @@
-use arc_swap::ArcSwapAny;
+use arc_swap::ArcSwap;
 
 use dhcproto::{
     v6::{self, DhcpOption, DhcpOptions, RelayMessage},
@@ -22,9 +22,9 @@ use crate::{
 };
 
 pub fn v6_worker(
-    reservations: Arc<ArcSwapAny<Arc<ReservationDb>>>,
+    reservations: Arc<ArcSwap<ReservationDb>>,
     leases: Arc<LeaseDb>,
-    config: Arc<ArcSwapAny<Arc<Config>>>,
+    config: Arc<ArcSwap<Config>>,
     event_channel: Option<mpsc::Sender<DhcpEvent>>,
 ) {
     // only work with relayed messages
