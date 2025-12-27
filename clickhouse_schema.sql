@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v4
     reservation_option82_remote Nullable(String),
     reservation_option82_subscriber Nullable(String),
 
+    -- Match info (how was reservation found)
+    match_method LowCardinality(Nullable(String)),  -- 'mac', 'option82'
+    extractor_used LowCardinality(Nullable(String)),  -- extractor name if option82
+
     -- Result
     success UInt8,
     failure_reason LowCardinality(Nullable(String)),
@@ -38,7 +42,8 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v4
     INDEX idx_host host_name TYPE bloom_filter GRANULARITY 4,
     INDEX idx_mac mac_address TYPE bloom_filter GRANULARITY 4,
     INDEX idx_success success TYPE minmax GRANULARITY 1,
-    INDEX idx_reservation_ipv4 reservation_ipv4 TYPE bloom_filter GRANULARITY 4
+    INDEX idx_reservation_ipv4 reservation_ipv4 TYPE bloom_filter GRANULARITY 4,
+    INDEX idx_match_method match_method TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
@@ -80,6 +85,10 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v6
     reservation_option1837_interface Nullable(String),
     reservation_option1837_remote Nullable(String),
 
+    -- Match info (how was reservation found)
+    match_method LowCardinality(Nullable(String)),  -- 'mac', 'duid', 'option1837'
+    extractor_used LowCardinality(Nullable(String)),  -- extractor name if option1837
+
     -- Result
     success UInt8,
     failure_reason LowCardinality(Nullable(String)),
@@ -89,7 +98,8 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v6
     INDEX idx_mac mac_address TYPE bloom_filter GRANULARITY 4,
     INDEX idx_client_id client_id TYPE bloom_filter GRANULARITY 4,
     INDEX idx_success success TYPE minmax GRANULARITY 1,
-    INDEX idx_reservation_ipv6_na reservation_ipv6_na TYPE bloom_filter GRANULARITY 4
+    INDEX idx_reservation_ipv6_na reservation_ipv6_na TYPE bloom_filter GRANULARITY 4,
+    INDEX idx_match_method match_method TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
@@ -176,6 +186,17 @@ GROUP BY host_name, relay_addr, date;
 
 -- Requests by relay
 -- SELECT relay_addr, sum(request_count) as total FROM dhcp.relay_stats_v4_mv GROUP BY relay_addr ORDER BY total DESC;
+
+-- Requests by match method (how was reservation found)
+-- SELECT match_method, count() as total FROM dhcp.events_v4 WHERE success = 1 GROUP BY match_method;
+-- SELECT match_method, count() as total FROM dhcp.events_v6 WHERE success = 1 GROUP BY match_method;
+
+-- Requests matched by Option82 with specific extractor
+-- SELECT * FROM dhcp.events_v4 WHERE match_method = 'option82' AND extractor_used = 'remote_only' ORDER BY timestamp DESC LIMIT 100;
+
+-- Breakdown by extractor used
+-- SELECT extractor_used, count() as total FROM dhcp.events_v4 WHERE match_method = 'option82' GROUP BY extractor_used;
+-- SELECT extractor_used, count() as total FROM dhcp.events_v6 WHERE match_method = 'option1837' GROUP BY extractor_used;
 
 -- Events from specific server
 -- SELECT * FROM dhcp.events_v4 WHERE host_name = 'dhcp-server-01' ORDER BY timestamp DESC LIMIT 100;
