@@ -274,7 +274,7 @@ impl DhcpEventV6 {
             client_id: input_msg
                 .client_id()
                 .and_then(|bytes| Duid::new(bytes.to_vec()))
-                .map(|d| d.to_colon_string()),
+                .map(|d| d.to_string()),
             option1837_interface: option1837
                 .as_ref()
                 .and_then(|o| o.interface.as_ref().map(|s| s.to_string())),
@@ -290,7 +290,7 @@ impl DhcpEventV6 {
             reservation_mac: reservation.and_then(|r| r.mac),
             reservation_duid: reservation
                 .and_then(|r| r.duid.as_ref())
-                .map(|d| d.to_colon_string()),
+                .map(|d| d.to_string()),
             reservation_option1837_interface: res_option1837
                 .and_then(|o| o.interface.as_ref().map(|s| s.to_string())),
             reservation_option1837_remote: res_option1837
@@ -328,7 +328,7 @@ impl DhcpEventV6 {
             client_id: input_msg
                 .client_id()
                 .and_then(|bytes| Duid::new(bytes.to_vec()))
-                .map(|d| d.to_colon_string()),
+                .map(|d| d.to_string()),
             option1837_interface: option1837
                 .as_ref()
                 .and_then(|o| o.interface.as_ref().map(|s| s.to_string())),

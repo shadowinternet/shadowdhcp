@@ -88,21 +88,30 @@ fn handle_client(stream: TcpStream, reservations: &Arc<ArcSwap<ReservationDb>>, 
         },
         Ok(MgmtRequest::Replace {
             reservations: new_res,
-        }) => {
-            // TODO: replace should update the reservations.json on disk in case the service restarts.
-            // how to make this safe if interrupted when writing the file?
-            let count = new_res.len();
-            let new_db = ReservationDb::new();
-            new_db.load_reservations(new_res);
-            reservations.store(Arc::new(new_db));
-            info!(count, "replaced reservations via TCP");
-            MgmtResponse {
-                success: true,
-                error: None,
-                message: Some(format!("Replaced with {} reservations", count)),
-                reservation_count: Some(count),
+        }) => match atomic_write_reservations(config_dir, &new_res) {
+            Ok(()) => {
+                let count = new_res.len();
+                let new_db = ReservationDb::new();
+                new_db.load_reservations(new_res);
+                reservations.store(Arc::new(new_db));
+                info!(count, "replaced reservations via TCP and persisted to disk");
+                MgmtResponse {
+                    success: true,
+                    error: None,
+                    message: Some(format!("Replaced with {} reservations", count)),
+                    reservation_count: Some(count),
+                }
             }
-        }
+            Err(e) => {
+                warn!(%e, "failed to persist reservations to disk");
+                MgmtResponse {
+                    success: false,
+                    error: Some(format!("Failed to write reservations: {}", e)),
+                    message: None,
+                    reservation_count: None,
+                }
+            }
+        },
         Ok(MgmtRequest::Status) => {
             let db = reservations.load();
             let count = db.len();
@@ -126,6 +135,32 @@ fn handle_client(stream: TcpStream, reservations: &Arc<ArcSwap<ReservationDb>>, 
         warn!(%e, "failed to write response");
     }
     let _ = writer.write_all(b"\n");
+}
+
+/// Atomically write reservations to disk using write-rename pattern.
+/// This ensures the file is never corrupted even if the process is killed mid-write.
+fn atomic_write_reservations(
+    config_dir: &Path,
+    reservations: &[Reservation],
+) -> std::io::Result<()> {
+    use std::fs::{self, File};
+
+    let target = config_dir.join("reservations.json");
+    let temp = config_dir.join("reservations.json.tmp");
+
+    // 1. Write to temp file (create truncates if exists)
+    let mut file = File::create(&temp)?;
+    serde_json::to_writer_pretty(&mut file, reservations).map_err(std::io::Error::other)?;
+    file.write_all(b"\n")?;
+
+    // 2. Flush to OS and sync to disk
+    file.flush()?;
+    file.sync_all()?;
+
+    // 3. Atomic rename (overwrites target)
+    fs::rename(&temp, &target)?;
+
+    Ok(())
 }
 
 /// Load reservations from disk and swap into the running database

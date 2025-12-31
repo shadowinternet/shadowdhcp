@@ -12,7 +12,7 @@ use serde::{de::Visitor, Deserialize, Serialize};
 
 pub mod logging;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct Reservation {
     // customer WAN v4 address
     pub ipv4: Ipv4Addr,
@@ -107,24 +107,24 @@ impl Duid {
     }
 }
 
-impl Duid {
-    pub fn to_colon_string(&self) -> String {
-        // Pre-allocate: 2 hex chars per byte + 1 colon between each
-        let mut result = String::with_capacity(self.bytes.len() * 3);
+impl fmt::Display for Duid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, b) in self.bytes.iter().enumerate() {
             if i > 0 {
-                result.push(':');
+                f.write_str(":")?;
             }
-            use std::fmt::Write;
-            let _ = write!(result, "{:02x}", b);
+            write!(f, "{:02x}", b)?;
         }
-        result
+        Ok(())
     }
 }
 
-impl fmt::Display for Duid {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:x?}", self.bytes)
+impl Serialize for Duid {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(duid_parsed_colon, duid);
         let duid_parsed_dash = Duid::try_from(duid_str_dash).unwrap();
         assert_eq!(duid_parsed_dash, duid);
-        assert_eq!(duid_parsed_colon.to_colon_string(), duid_str_colon);
+        assert_eq!(duid_parsed_colon.to_string(), duid_str_colon);
 
         #[derive(Deserialize)]
         struct DuidJson {
