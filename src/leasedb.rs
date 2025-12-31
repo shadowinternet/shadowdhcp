@@ -40,7 +40,7 @@ impl LeaseDb {
         valid: Duration,
     ) {
         if let Some(ref opt) = option82 {
-            self.insert_mac_option82_binding(&mac, &opt);
+            self.insert_mac_option82_binding(&mac, opt);
         }
 
         let now = Instant::now();
@@ -53,7 +53,7 @@ impl LeaseDb {
                 last_leased: now,
                 valid,
                 mac,
-                option82: option82,
+                option82,
             });
     }
 

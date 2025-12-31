@@ -104,7 +104,7 @@ impl DhcpEventV4 {
     }
 
     fn bytes_to_compact_string(bytes: &[u8]) -> Option<CompactString> {
-        CompactString::from_utf8(bytes.to_vec()).ok()
+        CompactString::from_utf8(bytes).ok()
     }
 
     pub fn success(

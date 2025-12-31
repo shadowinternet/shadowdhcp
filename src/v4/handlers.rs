@@ -83,8 +83,8 @@ pub fn handle_message(
     };
 
     match message_type {
-        v4::MessageType::Discover => handle_discover(reservations, config, &msg),
-        v4::MessageType::Request => handle_request(reservations, leases, config, &msg),
+        v4::MessageType::Discover => handle_discover(reservations, config, msg),
+        v4::MessageType::Request => handle_request(reservations, leases, config, msg),
         v4::MessageType::Decline => DhcpV4Response::NoResponse(NoResponse::Discarded),
         v4::MessageType::Release => DhcpV4Response::NoResponse(NoResponse::Discarded),
         // If a client has obtained a network address through some other means (e.g., manual configuration), it
