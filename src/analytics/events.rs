@@ -4,7 +4,7 @@ use dhcproto::v4;
 use dhcproto::v6::{self, MessageType};
 use ipnet::Ipv6Net;
 use serde::Serialize;
-use shadow_dhcpv6::{RelayAgentInformationExt, Reservation};
+use shadow_dhcpv6::{Duid, RelayAgentInformationExt, Reservation};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -247,14 +247,6 @@ impl DhcpEventV6 {
         }
     }
 
-    fn format_duid(bytes: &[u8]) -> String {
-        bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<Vec<_>>()
-            .join(":")
-    }
-
     pub fn success(
         input_msg: &v6::Message,
         relay_msg: &v6::RelayMessage,
@@ -270,16 +262,19 @@ impl DhcpEventV6 {
             message_type: Self::message_type_str(input_msg.msg_type()),
             xid: format!(
                 "{:02x}{:02x}{:02x}",
-                input_msg.xid()[0],
-                input_msg.xid()[1],
-                input_msg.xid()[2]
+                input_msg.xid().get(0).copied().unwrap_or(0),
+                input_msg.xid().get(1).copied().unwrap_or(0),
+                input_msg.xid().get(2).copied().unwrap_or(0)
             ),
             relay_addr,
             relay_link_addr: relay_msg.link_addr(),
             relay_peer_addr: relay_msg.peer_addr(),
             // Request data
             mac_address: relay_msg.hw_addr(),
-            client_id: input_msg.client_id().map(Self::format_duid),
+            client_id: input_msg
+                .client_id()
+                .and_then(|bytes| Duid::new(bytes.to_vec()))
+                .map(|d| d.to_colon_string()),
             option1837_interface: option1837
                 .as_ref()
                 .and_then(|o| o.interface.as_ref().map(|s| s.to_string())),
@@ -295,7 +290,7 @@ impl DhcpEventV6 {
             reservation_mac: reservation.and_then(|r| r.mac),
             reservation_duid: reservation
                 .and_then(|r| r.duid.as_ref())
-                .map(|d| Self::format_duid(&d.bytes)),
+                .map(|d| d.to_colon_string()),
             reservation_option1837_interface: res_option1837
                 .and_then(|o| o.interface.as_ref().map(|s| s.to_string())),
             reservation_option1837_remote: res_option1837
@@ -321,16 +316,19 @@ impl DhcpEventV6 {
             message_type: Self::message_type_str(input_msg.msg_type()),
             xid: format!(
                 "{:02x}{:02x}{:02x}",
-                input_msg.xid()[0],
-                input_msg.xid()[1],
-                input_msg.xid()[2]
+                input_msg.xid().get(0).copied().unwrap_or(0),
+                input_msg.xid().get(1).copied().unwrap_or(0),
+                input_msg.xid().get(2).copied().unwrap_or(0)
             ),
             relay_addr,
             relay_link_addr: relay_msg.link_addr(),
             relay_peer_addr: relay_msg.peer_addr(),
             // Request data
             mac_address: relay_msg.hw_addr(),
-            client_id: input_msg.client_id().map(Self::format_duid),
+            client_id: input_msg
+                .client_id()
+                .and_then(|bytes| Duid::new(bytes.to_vec()))
+                .map(|d| d.to_colon_string()),
             option1837_interface: option1837
                 .as_ref()
                 .and_then(|o| o.interface.as_ref().map(|s| s.to_string())),

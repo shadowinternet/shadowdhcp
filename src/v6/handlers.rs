@@ -33,6 +33,7 @@ pub struct ResponseMessage {
 #[derive(Debug, Copy, Clone)]
 pub enum NoResponse {
     NoClientId,
+    InvalidClientId,
     UnexpectedServerId,
     WrongServerId,
     NoServerId,
@@ -44,6 +45,7 @@ impl NoResponse {
     pub fn as_str(&self) -> &'static str {
         match self {
             NoResponse::NoClientId => "NoClientId",
+            NoResponse::InvalidClientId => "InvalidClientId",
             NoResponse::UnexpectedServerId => "UnexpectedServerId",
             NoResponse::WrongServerId => "WrongServerId",
             NoResponse::NoServerId => "NoServerId",
@@ -74,7 +76,10 @@ fn handle_solicit(
     // Servers MUST discard any Solicit messages that do not include a Client identifier
     // option or that do include a Server Identifier option
     let client_id = match msg.client_id() {
-        Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
+        Some(bytes) => match shadow_dhcpv6::Duid::new(bytes.to_vec()) {
+            Some(duid) => duid,
+            None => return DhcpV6Response::NoResponse(NoResponse::InvalidClientId),
+        },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
 
@@ -200,7 +205,10 @@ fn handle_renew(
 
     // message MUST include a ClientIdentifier option
     let client_id = match msg.client_id() {
-        Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
+        Some(bytes) => match shadow_dhcpv6::Duid::new(bytes.to_vec()) {
+            Some(duid) => duid,
+            None => return DhcpV6Response::NoResponse(NoResponse::InvalidClientId),
+        },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
@@ -351,7 +359,10 @@ fn handle_request(
     // * does not include a Server Identifier option
     // * includes a Server Identifier option that does not match this server's DUID
     let client_id = match msg.client_id() {
-        Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
+        Some(bytes) => match shadow_dhcpv6::Duid::new(bytes.to_vec()) {
+            Some(duid) => duid,
+            None => return DhcpV6Response::NoResponse(NoResponse::InvalidClientId),
+        },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
@@ -456,7 +467,10 @@ fn handle_rebind(
 ) -> DhcpV6Response {
     // Message MUST include a ClientIdentifier option
     let client_id = match msg.client_id() {
-        Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
+        Some(bytes) => match shadow_dhcpv6::Duid::new(bytes.to_vec()) {
+            Some(duid) => duid,
+            None => return DhcpV6Response::NoResponse(NoResponse::InvalidClientId),
+        },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));

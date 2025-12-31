@@ -89,12 +89,22 @@ pub fn tcp_writer<A: ToSocketAddrs + Debug>(address: A, rx: mpsc::Receiver<DhcpE
             match writer {
                 None => match Writer::connect(&address) {
                     Ok(w) => writer = Some(w),
-                    Err(_) => std::thread::sleep(RECONNECT_TIMEOUT),
+                    Err(_) => {
+                        // Drain pending events to prevent unbounded memory growth
+                        while let Ok(_) = rx.try_recv() {
+                            dropped += 1;
+                        }
+                        std::thread::sleep(RECONNECT_TIMEOUT);
+                    }
                 },
                 Some(ref mut w) => match w.send_batch(&batch) {
                     Ok(_) => break,
                     Err(_) => {
                         writer = None;
+                        // Drain pending events to prevent unbounded memory growth
+                        while let Ok(_) = rx.try_recv() {
+                            dropped += 1;
+                        }
                         std::thread::sleep(RECONNECT_TIMEOUT);
                     }
                 },

@@ -5,7 +5,7 @@ use std::{
 };
 
 use advmac::MacAddr6;
-use compact_str::{format_compact, CompactString, CompactStringExt};
+use compact_str::CompactString;
 use dhcproto::v4::relay::RelayAgentInformation;
 use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{de::Visitor, Deserialize, Serialize};
@@ -88,19 +88,37 @@ pub struct Option1837 {
     pub enterprise_number: Option<u32>,
 }
 
-// TODO: limit length of bytes
+/// Maximum DUID length per RFC 8415 Section 11.1
+pub const MAX_DUID_LEN: usize = 130;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Duid {
     pub bytes: Vec<u8>,
 }
 
 impl Duid {
+    /// Create a new DUID with length validation.
+    /// Returns None if the DUID exceeds MAX_DUID_LEN (130 bytes).
+    pub fn new(bytes: Vec<u8>) -> Option<Self> {
+        if bytes.len() > MAX_DUID_LEN {
+            return None;
+        }
+        Some(Duid { bytes })
+    }
+}
+
+impl Duid {
     pub fn to_colon_string(&self) -> String {
-        self.bytes
-            .iter()
-            .map(|byte| format_compact!("{:x}", byte))
-            .join_compact(":")
-            .to_string()
+        // Pre-allocate: 2 hex chars per byte + 1 colon between each
+        let mut result = String::with_capacity(self.bytes.len() * 3);
+        for (i, b) in self.bytes.iter().enumerate() {
+            if i > 0 {
+                result.push(':');
+            }
+            use std::fmt::Write;
+            let _ = write!(result, "{:02x}", b);
+        }
+        result
     }
 }
 
@@ -164,11 +182,20 @@ impl From<&[u8]> for Duid {
 }
 
 #[derive(Debug)]
-pub struct DuidParseError {}
+pub struct DuidParseError {
+    pub message: &'static str,
+}
 impl std::error::Error for DuidParseError {}
 impl std::fmt::Display for DuidParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Invalid DUID format")
+        f.write_str(self.message)
+    }
+}
+impl Default for DuidParseError {
+    fn default() -> Self {
+        Self {
+            message: "Invalid DUID format",
+        }
     }
 }
 
@@ -178,23 +205,27 @@ impl TryFrom<&str> for Duid {
     type Error = DuidParseError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value.trim().as_bytes().get(2) {
+        let bytes = match value.trim().as_bytes().get(2) {
             Some(&b':') => value
                 .trim()
                 .split(':')
                 .map(|hex| u8::from_str_radix(hex, 16))
                 .collect::<Result<Vec<u8>, _>>()
-                .map_err(|_| DuidParseError {})
-                .map(Duid::from),
+                .map_err(|_| DuidParseError::default())?,
             Some(&b'-') => value
                 .trim()
                 .split('-')
                 .map(|hex| u8::from_str_radix(hex, 16))
                 .collect::<Result<Vec<u8>, _>>()
-                .map_err(|_| DuidParseError {})
-                .map(Duid::from),
-            _ => Err(DuidParseError {}),
+                .map_err(|_| DuidParseError::default())?,
+            _ => return Err(DuidParseError::default()),
+        };
+        if bytes.len() > MAX_DUID_LEN {
+            return Err(DuidParseError {
+                message: "DUID exceeds maximum length of 130 bytes",
+            });
         }
+        Ok(Duid { bytes })
     }
 }
 
@@ -251,6 +282,7 @@ mod tests {
         assert_eq!(duid_parsed_colon, duid);
         let duid_parsed_dash = Duid::try_from(duid_str_dash).unwrap();
         assert_eq!(duid_parsed_dash, duid);
+        assert_eq!(duid_parsed_colon.to_colon_string(), duid_str_colon);
 
         #[derive(Deserialize)]
         struct DuidJson {

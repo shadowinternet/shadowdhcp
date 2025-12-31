@@ -83,9 +83,24 @@ fn main() {
     logging::init_stdout(config.log_level);
     let config = Arc::new(ArcSwap::from_pointee(config));
 
-    let reservations: Vec<Reservation> =
-        serde_json::from_reader(std::fs::File::open(config_dir.join("reservations.json")).unwrap())
-            .unwrap();
+    let reservations_path = config_dir.join("reservations.json");
+    let reservations: Vec<Reservation> = match std::fs::File::open(&reservations_path) {
+        Ok(file) => match serde_json::from_reader(file) {
+            Ok(res) => res,
+            Err(e) => {
+                eprintln!("Failed to parse {}: {e}", reservations_path.display());
+                return;
+            }
+        },
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            tracing::warn!("No reservations.json found, starting with empty reservations");
+            Vec::new()
+        }
+        Err(e) => {
+            eprintln!("Failed to open {}: {e}", reservations_path.display());
+            return;
+        }
+    };
     tracing::info!("Loaded {} reservations", reservations.len());
 
     let db = ReservationDb::new();

@@ -89,6 +89,8 @@ fn handle_client(stream: TcpStream, reservations: &Arc<ArcSwap<ReservationDb>>, 
         Ok(MgmtRequest::Replace {
             reservations: new_res,
         }) => {
+            // TODO: replace should update the reservations.json on disk in case the service restarts.
+            // how to make this safe if interrupted when writing the file?
             let count = new_res.len();
             let new_db = ReservationDb::new();
             new_db.load_reservations(new_res);

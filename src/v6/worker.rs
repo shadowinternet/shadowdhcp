@@ -13,6 +13,7 @@ use std::{
     io,
     net::{SocketAddr, UdpSocket},
     sync::{mpsc, Arc},
+    time::Duration,
 };
 use tracing::{debug, error, trace};
 
@@ -29,12 +30,15 @@ pub fn v6_worker(
     event_channel: Option<mpsc::Sender<DhcpEvent>>,
 ) {
     let mut read_buf = [0u8; 2048];
+    let mut error_count: u32 = 0;
+    const MAX_BACKOFF_MS: u64 = 1000;
 
     // listen for messages
     loop {
         // if the src is not listening on response, it may send a ICMP host unreachable
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
+                error_count = 0;
                 debug!("Received {amount} bytes from {src:?}");
                 trace!("Data: {}", hex_for_text2pcap(&read_buf[..amount]));
                 (amount, src)
@@ -49,6 +53,13 @@ pub fn v6_worker(
                     }
                     _ => {
                         error!("Unexpected socket error: {err:?}");
+                        // Apply exponential backoff to prevent CPU spin on persistent errors
+                        error_count = error_count.saturating_add(1);
+                        let backoff_ms = std::cmp::min(
+                            10_u64.saturating_mul(2_u64.saturating_pow(error_count)),
+                            MAX_BACKOFF_MS,
+                        );
+                        std::thread::sleep(Duration::from_millis(backoff_ms));
                     }
                 }
                 continue;
