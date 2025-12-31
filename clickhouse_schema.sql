@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v4
 
     -- Match info (how was reservation found)
     match_method LowCardinality(Nullable(String)),  -- 'mac', 'option82'
-    extractor_used LowCardinality(Nullable(String)),  -- extractor name if option82
+    extractor_used LowCardinality(Nullable(String)),  -- extractor name (e.g., 'chaddr' for mac, or option82 extractor name)
 
     -- Result
     success UInt8,
@@ -86,8 +86,8 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v6
     reservation_option1837_remote Nullable(String),
 
     -- Match info (how was reservation found)
-    match_method LowCardinality(Nullable(String)),  -- 'mac', 'duid', 'option1837'
-    extractor_used LowCardinality(Nullable(String)),  -- extractor name if option1837
+    match_method LowCardinality(Nullable(String)),  -- 'mac', 'duid', 'option1837', 'option82'
+    extractor_used LowCardinality(Nullable(String)),  -- extractor name (mac: 'client_linklayer_address', 'peer_addr_eui64', 'duid'; option1837/option82: extractor name)
 
     -- Result
     success UInt8,
@@ -197,6 +197,10 @@ GROUP BY host_name, relay_addr, date;
 -- Breakdown by extractor used
 -- SELECT extractor_used, count() as total FROM dhcp.events_v4 WHERE match_method = 'option82' GROUP BY extractor_used;
 -- SELECT extractor_used, count() as total FROM dhcp.events_v6 WHERE match_method = 'option1837' GROUP BY extractor_used;
+
+-- MAC extractor breakdown (DHCPv6)
+-- SELECT extractor_used, count() as total FROM dhcp.events_v6 WHERE match_method = 'mac' GROUP BY extractor_used;
+-- Possible values: 'client_linklayer_address' (RFC 6939), 'peer_addr_eui64', 'duid'
 
 -- Events from specific server
 -- SELECT * FROM dhcp.events_v4 WHERE host_name = 'dhcp-server-01' ORDER BY timestamp DESC LIMIT 100;

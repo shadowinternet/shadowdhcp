@@ -25,6 +25,18 @@ Multiple extractors are defined and can be enabled in the config file to try and
 
 Extractors for DHCPv6 interface-id (Option 18) and remote-id (Option 37) fields.
 
+### MAC extractors (DHCPv6)
+
+MAC extractors control how client MAC addresses are extracted from DHCPv6 relay messages. Each configured extractor is tried in order until one produces a MAC that matches a reservation.
+
+| Extractor | Source | Reliability | Notes |
+|-----------|--------|-------------|-------|
+| `client_linklayer_address` | RFC 6939 Option 79 | High | Added by first-hop relay agent |
+| `peer_addr_eui64` | Relay peer_addr | Medium | Only works with EUI-64 link-local addresses |
+| `duid` | Client DUID (types 1 & 3) | Low | RFC 8415 warns MAC may be stale |
+
+Default: `["client_linklayer_address"]` if not specified.
+
 
 ## Example config:
 
@@ -54,6 +66,10 @@ Extractors for DHCPv6 interface-id (Option 18) and remote-id (Option 37) fields.
         "interface_only",
         "remote_only",
         "interface_and_remote"
+    ],
+    "mac_extractors": [
+        "client_linklayer_address",
+        "peer_addr_eui64"
     ]
 }
 ```
@@ -61,6 +77,7 @@ Extractors for DHCPv6 interface-id (Option 18) and remote-id (Option 37) fields.
 Optional fields:
 - `option82_extractors`: List of DHCPv4 Option82 extractor functions
 - `option1837_extractors`: List of DHCPv6 Option18/37 extractor functions
+- `mac_extractors`: List of DHCPv6 MAC extraction methods (default: `["client_linklayer_address"]`)
 - `events_address`: Address:port for analytics events (JSON over TCP) (e.g., 127.0.0.1:9000)
 - `mgmt_address`: Address:port for management interface (e.g., 127.0.0.1:8547)
 - `log_level`: One of [trace, debug, info, warn, error] (default: info)

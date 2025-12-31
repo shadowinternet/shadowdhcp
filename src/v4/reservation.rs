@@ -58,9 +58,9 @@ pub fn find_reservation(
     mac_addr: MacAddr6,
     relay: Option<&RelayAgentInformation>,
 ) -> Option<(Arc<Reservation>, ReservationMatch)> {
-    // Priority 1: MAC address
+    // Priority 1: MAC address (from chaddr field)
     if let Some(res) = reservations.by_mac(mac_addr) {
-        return Some((res, ReservationMatch::mac()));
+        return Some((res, ReservationMatch::mac("chaddr")));
     }
 
     // Priority 2: Option 82 with extractors

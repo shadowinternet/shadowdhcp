@@ -113,12 +113,14 @@ impl ShadowRelayMessageExtV6 for RelayMessage {
         }
     }
 
-    /// Try to extract a link layer address from the client message by using the
-    /// DHCPv6 Client Link-Layer Address option, RFC6939
-    /// <https://datatracker.ietf.org/doc/html/rfc6939#section-4>
-    /// TODO: add fallbacks for other methods to get the link layer address
-    /// TODO: return multiple possible link layer addresses
-    /// RelayMsg: ClientLinklayerAddres, RelayMsg: peer_addr, Msg: DUID
+    /// Try to extract a link layer address from the relay message using the
+    /// DHCPv6 Client Link-Layer Address option (RFC 6939).
+    ///
+    /// This is a convenience method for logging/debugging. For reservation matching,
+    /// use the configurable `MacExtractor` system which supports multiple extraction
+    /// methods (ClientLinklayerAddress, peer_addr EUI-64, DUID).
+    ///
+    /// See: <https://datatracker.ietf.org/doc/html/rfc6939#section-4>
     fn hw_addr(&self) -> Option<MacAddr6> {
         self.opts().iter().find_map(|opt| match opt {
             DhcpOption::ClientLinklayerAddress(ll) if ll.address.len() == 6 => {

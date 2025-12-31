@@ -21,10 +21,10 @@ pub struct ReservationMatch {
 }
 
 impl ReservationMatch {
-    pub fn mac() -> Self {
+    pub fn mac(extractor: &'static str) -> Self {
         Self {
             method: "mac",
-            extractor: None,
+            extractor: Some(extractor),
         }
     }
 

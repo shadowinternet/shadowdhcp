@@ -8,6 +8,7 @@ use std::{
 
 use crate::v4::extractors::{self as v4_extractors, NamedOption82Extractor};
 use crate::v6::extractors::{self as v6_extractors, NamedOption1837Extractor};
+use crate::v6::mac_extractors::MacExtractor;
 use shadow_dhcpv6::{Duid, V4Subnet};
 
 /// Server wide configuration
@@ -18,6 +19,7 @@ pub struct Config {
     pub v6_server_id: Duid,
     pub option82_extractors: Vec<NamedOption82Extractor>,
     pub option1837_extractors: Vec<NamedOption1837Extractor>,
+    pub mac_extractors: Vec<MacExtractor>,
     pub log_level: tracing::Level,
     pub events_address: Option<SocketAddr>,
     pub mgmt_address: Option<SocketAddr>,
@@ -35,6 +37,7 @@ struct ServerConfig {
     option82_extractors: Vec<String>,
     #[serde(default)]
     option1837_extractors: Vec<String>,
+    mac_extractors: Option<Vec<MacExtractor>>,
     log_level: Option<String>,
     events_address: Option<SocketAddr>,
     mgmt_address: Option<SocketAddr>,
@@ -134,6 +137,7 @@ impl Default for Config {
             v6_server_id: Duid::default(),
             option82_extractors: vec![],
             option1837_extractors: vec![],
+            mac_extractors: vec![MacExtractor::ClientLinklayerAddress],
             log_level: tracing::Level::INFO,
             events_address: None,
             mgmt_address: None,
@@ -184,6 +188,12 @@ impl Config {
             _ => tracing::Level::INFO,
         };
 
+        // Default to ClientLinklayerAddress if no extractors configured
+        let mac_extractors = server_config
+            .mac_extractors
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| vec![MacExtractor::ClientLinklayerAddress]);
+
         Ok(Config {
             dns_v4: server_config.dns_v4,
             v4_server_id: server_ids.v4,
@@ -191,6 +201,7 @@ impl Config {
             v6_server_id: server_ids.v6,
             option82_extractors,
             option1837_extractors,
+            mac_extractors,
             log_level,
             events_address: server_config.events_address,
             mgmt_address: server_config.mgmt_address,

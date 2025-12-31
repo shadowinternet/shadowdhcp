@@ -50,6 +50,7 @@ fn main() {
         let mut extractors_v6: Vec<_> = v6::extractors::get_all_extractors().into_keys().collect();
         extractors_v6.sort_unstable();
         println!("Option18/37 (DHCPv6): {}", extractors_v6.join(", "));
+        println!("MAC (DHCPv6): client_linklayer_address, peer_addr_eui64, duid");
         return;
     }
     if args.contains("--version") {
@@ -206,6 +207,7 @@ Extractors are run in order from the config file, put the most commonly used ext
 
 Option82 extractors parse DHCPv4 relay agent information (circuit, remote, subscriber fields).
 Option18/37 extractors parse DHCPv6 interface-id (Option 18) and remote-id (Option 37) fields.
+MAC extractors (DHCPv6) control how client MAC addresses are extracted from relay messages.
 
 Run `shadowdhcp --available-extractors` to see all available extractors.
 
@@ -236,6 +238,9 @@ config.json:
         "remote_only",
         "interface_and_remote"
     ],
+    "mac_extractors": [
+        "client_linklayer_address"
+    ],
     "events_address": "127.0.0.1:9000",
     "mgmt_address": "127.0.0.1:8547"
 }
@@ -243,6 +248,7 @@ config.json:
 Optional fields:
   - option82_extractors: List of DHCPv4 Option82 extractor functions
   - option1837_extractors: List of DHCPv6 Option18/37 extractor functions
+  - mac_extractors: List of DHCPv6 MAC extraction methods (default: ["client_linklayer_address"])
   - events_address: Address:port for analytics events (JSON over TCP)
   - mgmt_address: Address:port for management interface (reload/replace reservations)
   - log_level: One of [trace, debug, info, warn, error] (default: info)

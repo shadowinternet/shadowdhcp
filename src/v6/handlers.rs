@@ -100,7 +100,9 @@ fn handle_solicit(
         reservations,
         leases,
         &config.option1837_extractors,
+        &config.mac_extractors,
         relay_msg,
+        msg,
         &client_id,
     );
     match reserved_address {
@@ -218,7 +220,9 @@ fn handle_renew(
         reservations,
         leases,
         &config.option1837_extractors,
+        &config.mac_extractors,
         relay_msg,
+        msg,
         &client_id,
     );
 
@@ -364,7 +368,9 @@ fn handle_request(
         reservations,
         leases,
         &config.option1837_extractors,
+        &config.mac_extractors,
         relay_msg,
+        msg,
         &client_id,
     );
     match reserved_address {
@@ -469,7 +475,9 @@ fn handle_rebind(
         reservations,
         leases,
         &config.option1837_extractors,
+        &config.mac_extractors,
         relay_msg,
+        msg,
         &client_id,
     );
 
