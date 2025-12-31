@@ -75,7 +75,7 @@ fn main() {
     let config = match Config::load_from_files(&config_dir) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Unable to a load config file: {e}\nCheck the file exists, or set the `--configdir` parameter to the folder containing the `config.json` and `ids.json` files.");
+            eprintln!("Unable to a load config file: {e}");
             return;
         }
     };

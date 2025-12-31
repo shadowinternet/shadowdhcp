@@ -89,20 +89,36 @@ impl<T> PathContext<T> for std::io::Result<T> {
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConfigError::UnknownOption82Extractor(ex) => {
-                write!(f, "Unknown Option82 extractor function `{ex}`")
+            ConfigError::UnknownOption82Extractor(name) => {
+                writeln!(f, "Unknown Option82 extractor: `{name}`")?;
+                write!(
+                    f,
+                    "Run `shadowdhcp --available-extractors` to see valid options"
+                )
             }
-            ConfigError::UnknownOption1837Extractor(ex) => {
-                write!(f, "Unknown Option1837 extractor function `{ex}`")
+            ConfigError::UnknownOption1837Extractor(name) => {
+                writeln!(f, "Unknown Option18/37 extractor: `{name}`")?;
+                write!(
+                    f,
+                    "Run `shadowdhcp --available-extractors` to see valid options"
+                )
             }
             ConfigError::Parsing { err, path } => {
-                write!(f, "Parsing `{}`: {err}", path.to_string_lossy())
+                writeln!(f, "Failed to parse `{}`:", path.to_string_lossy())?;
+                writeln!(f, "  {err}")?;
+                write!(
+                    f,
+                    "Run `shadowdhcp --help-config` for configuration file format"
+                )
             }
-            ConfigError::Io { err, path } => write!(f, "`{}`: {err}", path.to_string_lossy()),
-            ConfigError::LogLevel(value) => write!(
-                f,
-                r#"Unexpected log level {value}. Expected one of [trace, debug, info, warn, error]"#
-            ),
+            ConfigError::Io { err, path } => {
+                writeln!(f, "Cannot read `{}`: {err}", path.to_string_lossy())?;
+                write!(f, "Check the file exists, or run with --config-dir to specify the directory containing config.json and ids.json")
+            }
+            ConfigError::LogLevel(value) => {
+                writeln!(f, "Invalid log_level: `{value}`")?;
+                write!(f, "Expected one of: trace, debug, info, warn, error")
+            }
         }
     }
 }
