@@ -17,15 +17,13 @@ use crate::{
 };
 
 pub fn v4_worker(
+    socket: UdpSocket,
     reservations: Arc<ArcSwap<ReservationDb>>,
     leases: Arc<LeaseDb>,
     config: Arc<ArcSwap<Config>>,
     event_channel: Option<mpsc::Sender<DhcpEvent>>,
 ) {
     let mut read_buf = [0u8; 2048];
-    let bind_addr = config.load().v4_bind_address;
-    let socket = UdpSocket::bind(bind_addr).expect("udp bind");
-    info!("Successfully bound to: {bind_addr}");
 
     loop {
         let (amount, src) = match socket.recv_from(&mut read_buf) {
@@ -35,14 +33,18 @@ pub fn v4_worker(
                 (amount, src)
             }
             Err(err) => {
-                error!("Error receiving: {err:?}");
                 match err.kind() {
                     io::ErrorKind::ConnectionReset => {
                         info!("Sent response to host that responded with ICMP unreachable");
-                        continue;
                     }
-                    _ => todo!(),
+                    io::ErrorKind::Interrupted => {
+                        debug!("recv_from interrupted, retrying");
+                    }
+                    _ => {
+                        error!("Unexpected socket error: {err:?}");
+                    }
                 }
+                continue;
             }
         };
 
@@ -60,7 +62,13 @@ pub fn v4_worker(
                     }
                 }
                 DhcpV4Response::Message(resp) => {
-                    let write_buf = resp.message.to_vec().expect("encoding response message");
+                    let write_buf = match resp.message.to_vec() {
+                        Ok(buf) => buf,
+                        Err(e) => {
+                            error!("Failed to encode DHCPv4 response: {e}");
+                            continue;
+                        }
+                    };
                     match socket.send_to(&write_buf, src) {
                         Ok(sent) => {
                             debug!("responded to {src} with {sent} bytes");

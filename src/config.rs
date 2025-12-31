@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::{
     fmt,
-    net::{Ipv4Addr, SocketAddr},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -21,8 +21,8 @@ pub struct Config {
     pub log_level: tracing::Level,
     pub events_address: Option<SocketAddr>,
     pub mgmt_address: Option<SocketAddr>,
-    pub v4_bind_address: SocketAddr,
-    pub v6_bind_address: SocketAddr,
+    pub v4_bind_address: SocketAddrV4,
+    pub v6_bind_address: SocketAddrV6,
 }
 
 /// Server wide configuration, used to deserialize the config.json file before
@@ -38,8 +38,8 @@ struct ServerConfig {
     log_level: Option<String>,
     events_address: Option<SocketAddr>,
     mgmt_address: Option<SocketAddr>,
-    v4_bind_address: Option<SocketAddr>,
-    v6_bind_address: Option<SocketAddr>,
+    v4_bind_address: Option<SocketAddrV4>,
+    v6_bind_address: Option<SocketAddrV6>,
 }
 
 /// Server IDs stored in separate file that may be auto generated in the future

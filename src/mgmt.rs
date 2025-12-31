@@ -1,12 +1,12 @@
 use std::io::{BufRead, BufReader, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::reservationdb::ReservationDb;
 use shadow_dhcpv6::Reservation;
@@ -35,21 +35,10 @@ pub struct MgmtResponse {
 
 /// Main management listener loop
 pub fn listener(
+    listener: TcpListener,
     reservations: Arc<ArcSwap<ReservationDb>>,
     config_dir: PathBuf,
-    bind_addr: SocketAddr,
 ) {
-    let listener = match TcpListener::bind(bind_addr) {
-        Ok(l) => {
-            info!(%bind_addr, "management interface listening");
-            l
-        }
-        Err(e) => {
-            error!(%bind_addr, %e, "failed to bind management interface");
-            return;
-        }
-    };
-
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {

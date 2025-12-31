@@ -1,4 +1,6 @@
 use std::{
+    io,
+    net::{SocketAddr, TcpListener, UdpSocket},
     path::PathBuf,
     sync::{mpsc, Arc},
     thread,
@@ -100,6 +102,16 @@ fn main() {
         .map(|_| mpsc::channel::<DhcpEvent>())
         .unzip();
 
+    // Bind sockets before spawning threads - fail fast if any fails
+    let v4_socket = bind_udp_socket(config.load().v4_bind_address, "DHCPv4");
+    let v6_socket = bind_udp_socket(config.load().v6_bind_address, "DHCPv6");
+    let mgmt_listener = mgmt_address.map(|addr| bind_tcp_socket(addr, "management"));
+    tracing::info!("Bound DHCPv4 to {}", config.load().v4_bind_address);
+    tracing::info!("Bound DHCPv6 to {}", config.load().v6_bind_address);
+    if let Some(addr) = mgmt_address {
+        tracing::info!("Bound management to {}", addr);
+    }
+
     // Spawn SIGHUP handler (Unix only, before thread::scope since it runs forever)
     #[cfg(unix)]
     let _sighup_handler = signal::spawn_sighup_handler(db.clone(), config_dir.clone());
@@ -114,14 +126,18 @@ fn main() {
             (db.clone(), leases.clone(), config.clone(), tx.clone());
         let v4worker = thread::Builder::new()
             .name("v4worker".to_string())
-            .spawn_scoped(s, move || v4::v4_worker(v4db, v4leases, v4config, v4tx))
+            .spawn_scoped(s, move || {
+                v4::v4_worker(v4_socket, v4db, v4leases, v4config, v4tx)
+            })
             .expect("v4worker spawn");
 
         let (v6db, v6leases, v6config, v6tx) =
             (db.clone(), leases.clone(), config.clone(), tx.clone());
         let v6worker = thread::Builder::new()
             .name("v6worker".to_string())
-            .spawn_scoped(s, move || v6::v6_worker(v6db, v6leases, v6config, v6tx))
+            .spawn_scoped(s, move || {
+                v6::v6_worker(v6_socket, v6db, v6leases, v6config, v6tx)
+            })
             .expect("v6worker spawn");
 
         let events_worker = events_address.zip(rx).map(|(addr, rx)| {
@@ -132,12 +148,14 @@ fn main() {
         });
 
         // Spawn management interface listener if configured
-        let mgmt_worker = mgmt_address.map(|addr| {
+        let mgmt_worker = mgmt_listener.map(|listener| {
             let mgmt_db = db.clone();
             let mgmt_config_dir = config_dir.clone();
             thread::Builder::new()
                 .name("mgmt".to_string())
-                .spawn_scoped(s, move || mgmt::listener(mgmt_db, mgmt_config_dir, addr))
+                .spawn_scoped(s, move || {
+                    mgmt::listener(listener, mgmt_db, mgmt_config_dir)
+                })
                 .expect("mgmt spawn")
         });
 
@@ -286,3 +304,70 @@ reservations.json:
     }
 ]
 "#;
+
+fn bind_udp_socket(addr: impl Into<SocketAddr>, protocol: &str) -> UdpSocket {
+    let addr = addr.into();
+    match UdpSocket::bind(addr) {
+        Ok(socket) => socket,
+        Err(e) => {
+            print_bind_error(addr, protocol, &e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn bind_tcp_socket(addr: impl Into<SocketAddr>, protocol: &str) -> TcpListener {
+    let addr = addr.into();
+    match TcpListener::bind(addr) {
+        Ok(listener) => listener,
+        Err(e) => {
+            print_bind_error(addr, protocol, &e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn print_bind_error(addr: SocketAddr, protocol: &str, e: &io::Error) {
+    eprintln!("Failed to bind {protocol} socket to {addr}: {e}");
+    match e.kind() {
+        io::ErrorKind::PermissionDenied => {
+            eprintln!(
+                "Hint: Binding to port {} requires elevated privileges.",
+                addr.port()
+            );
+            #[cfg(unix)]
+            {
+                let exe_path = std::env::current_exe()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "./shadowdhcp".to_string());
+                eprintln!("  - Run as root, or");
+                eprintln!("  - Use setcap: sudo setcap 'cap_net_bind_service=+ep' {exe_path}");
+            }
+            #[cfg(windows)]
+            {
+                eprintln!("  - Run as Administrator");
+            }
+        }
+        io::ErrorKind::AddrInUse => {
+            eprintln!(
+                "Hint: Port {} is already in use by another process.",
+                addr.port()
+            );
+            #[cfg(unix)]
+            eprintln!("  - Check with: ss -tlnp | grep {}", addr.port());
+            #[cfg(windows)]
+            eprintln!("  - Check with: netstat -ano | findstr :{}", addr.port());
+        }
+        io::ErrorKind::AddrNotAvailable => {
+            eprintln!(
+                "Hint: Address {} is not available on this system.",
+                addr.ip()
+            );
+            #[cfg(unix)]
+            eprintln!("  - Check available addresses with: ip addr");
+            #[cfg(windows)]
+            eprintln!("  - Check available addresses with: ipconfig");
+        }
+        _ => {}
+    }
+}

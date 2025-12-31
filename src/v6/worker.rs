@@ -14,7 +14,7 @@ use std::{
     net::{SocketAddr, UdpSocket},
     sync::{mpsc, Arc},
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
     analytics::events::{DhcpEvent, DhcpEventV6},
@@ -22,15 +22,12 @@ use crate::{
 };
 
 pub fn v6_worker(
+    socket: UdpSocket,
     reservations: Arc<ArcSwap<ReservationDb>>,
     leases: Arc<LeaseDb>,
     config: Arc<ArcSwap<Config>>,
     event_channel: Option<mpsc::Sender<DhcpEvent>>,
 ) {
-    // only work with relayed messages
-    let bind_addr = config.load().v6_bind_address;
-    let socket = UdpSocket::bind(bind_addr).expect("udp bind");
-    info!("Successfully bound to: {bind_addr}");
     let mut read_buf = [0u8; 2048];
 
     // listen for messages
@@ -43,33 +40,18 @@ pub fn v6_worker(
                 (amount, src)
             }
             Err(err) => {
-                error!("Error receiving: {err:?}");
                 match err.kind() {
-                    io::ErrorKind::NotFound => todo!(),
-                    io::ErrorKind::PermissionDenied => todo!(),
-                    io::ErrorKind::ConnectionRefused => todo!(),
                     io::ErrorKind::ConnectionReset => {
                         error!("Sent response to host that responded with ICMP unreachable");
-                        continue;
                     }
-                    io::ErrorKind::ConnectionAborted => todo!(),
-                    io::ErrorKind::NotConnected => todo!(),
-                    io::ErrorKind::AddrInUse => todo!(),
-                    io::ErrorKind::AddrNotAvailable => todo!(),
-                    io::ErrorKind::BrokenPipe => todo!(),
-                    io::ErrorKind::AlreadyExists => todo!(),
-                    io::ErrorKind::WouldBlock => todo!(),
-                    io::ErrorKind::InvalidInput => todo!(),
-                    io::ErrorKind::InvalidData => todo!(),
-                    io::ErrorKind::TimedOut => todo!(),
-                    io::ErrorKind::WriteZero => todo!(),
-                    io::ErrorKind::Interrupted => todo!(),
-                    io::ErrorKind::Unsupported => todo!(),
-                    io::ErrorKind::UnexpectedEof => todo!(),
-                    io::ErrorKind::OutOfMemory => todo!(),
-                    io::ErrorKind::Other => todo!(),
-                    _ => todo!(),
+                    io::ErrorKind::Interrupted => {
+                        debug!("recv_from interrupted, retrying");
+                    }
+                    _ => {
+                        error!("Unexpected socket error: {err:?}");
+                    }
                 }
+                continue;
             }
         };
         match v6::RelayMessage::from_bytes(&read_buf[..amount]) {
@@ -130,7 +112,13 @@ pub fn v6_worker(
                             opts: relay_reply_opts,
                         };
 
-                        let write_buf = relay_msg.to_vec().expect("encoding response msg");
+                        let write_buf = match relay_msg.to_vec() {
+                            Ok(buf) => buf,
+                            Err(e) => {
+                                error!("Failed to encode DHCPv6 response: {e}");
+                                continue;
+                            }
+                        };
                         match socket.send_to(&write_buf, src) {
                             Ok(sent) => {
                                 debug!("responded to {src} with {sent} bytes");
