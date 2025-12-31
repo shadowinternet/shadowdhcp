@@ -1,4 +1,4 @@
--- ClickHouse schema for shadow_dhcpv6 analytics
+-- ClickHouse schema for shadowdhcp analytics
 -- Run with: clickhouse-client --password --multiquery < clickhouse_schema.sql
 
 CREATE DATABASE IF NOT EXISTS dhcp;
@@ -272,7 +272,7 @@ GROUP BY ServiceName, HostName, SeverityText, date;
 -- SELECT TimestampTime, Body, LogAttributes FROM dhcp.otel_logs WHERE SeverityText = 'ERROR' ORDER BY TimestampTime DESC LIMIT 100;
 
 -- Logs by target module
--- SELECT TimestampTime, Body FROM dhcp.otel_logs WHERE JSONExtractString(LogAttributes, 'target') LIKE 'shadow_dhcpv6::v6%' ORDER BY TimestampTime DESC LIMIT 50;
+-- SELECT TimestampTime, Body FROM dhcp.otel_logs WHERE JSONExtractString(LogAttributes, 'target') LIKE 'shadowdhcp::v6%' ORDER BY TimestampTime DESC LIMIT 50;
 
 -- Log volume by severity
 -- SELECT SeverityText, sum(log_count) as total FROM dhcp.log_severity_stats_mv GROUP BY SeverityText;

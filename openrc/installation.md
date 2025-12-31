@@ -1,6 +1,6 @@
-# shadow_dhcpv6 Installation Guide (Alpine Linux / OpenRC)
+# shadowdhcp Installation Guide (Alpine Linux / OpenRC)
 
-This guide covers installing shadow_dhcpv6 with optional Vector telemetry on Alpine Linux.
+This guide covers installing shadowdhcp with optional Vector telemetry on Alpine Linux.
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ apk add logrotate libcap
 
 ```bash
 # Create shadowdhcp user (no home directory, no login shell)
-adduser -D -H -s /sbin/nologin -g "shadow_dhcpv6 service" shadowdhcp
+adduser -D -H -s /sbin/nologin -g "shadowdhcp service" shadowdhcp
 ```
 
 ### Copy the binary

@@ -4,7 +4,7 @@ use dhcproto::v4;
 use dhcproto::v6::{self, MessageType};
 use ipnet::Ipv6Net;
 use serde::Serialize;
-use shadow_dhcpv6::{Duid, RelayAgentInformationExt, Reservation};
+use shadowdhcp::{Duid, RelayAgentInformationExt, Reservation};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -1,8 +1,8 @@
 #!/sbin/openrc-run
-# OpenRC init script for Vector (shadow_dhcpv6 analytics)
+# OpenRC init script for Vector (shadowdhcp analytics)
 
 name="vector"
-description="Vector observability pipeline for shadow_dhcpv6"
+description="Vector observability pipeline for shadowdhcp"
 
 command="/usr/local/bin/vector"
 command_args="--config /etc/vector/vector.toml"

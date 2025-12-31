@@ -1,4 +1,4 @@
-# Vector configuration for shadow_dhcpv6 analytics and traces
+# Vector configuration for shadowdhcp analytics and traces
 # Receives DHCP events via TCP and traces via exec, sends to ClickHouse
 #
 # Required environment variables:
@@ -75,7 +75,7 @@ inputs = ["traces"]
 source = '''
 # Map tracing-subscriber JSON to OTLP log format
 # Input format from tracing-subscriber json():
-# {"timestamp":"2024-01-01T00:00:00.000000Z","level":"INFO","target":"shadow_dhcpv6::v6","fields":{"message":"..."},...}
+# {"timestamp":"2024-01-01T00:00:00.000000Z","level":"INFO","target":"shadowdhcp::v6","fields":{"message":"..."},...}
 
 # Parse timestamp to unix nanoseconds
 .TimestampTime = .timestamp

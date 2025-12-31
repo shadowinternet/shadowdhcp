@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dhcproto::v6::{Message, RelayMessage};
-use shadow_dhcpv6::{Duid, Reservation};
+use shadowdhcp::{Duid, Reservation};
 use tracing::debug;
 
 use crate::analytics::events::ReservationMatch;

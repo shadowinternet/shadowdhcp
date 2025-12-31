@@ -6,7 +6,7 @@ use std::{
 use dhcproto::v6::{
     DhcpOption, DhcpOptions, IAAddr, IAPrefix, Message, MessageType, RelayMessage, IANA, IAPD,
 };
-use shadow_dhcpv6::{LeaseV6, Reservation};
+use shadowdhcp::{LeaseV6, Reservation};
 
 use crate::analytics::events::ReservationMatch;
 use crate::config::Config;
@@ -76,7 +76,7 @@ fn handle_solicit(
     // Servers MUST discard any Solicit messages that do not include a Client identifier
     // option or that do include a Server Identifier option
     let client_id = match msg.client_id() {
-        Some(bytes) => match shadow_dhcpv6::Duid::new(bytes.to_vec()) {
+        Some(bytes) => match shadowdhcp::Duid::new(bytes.to_vec()) {
             Some(duid) => duid,
             None => return DhcpV6Response::NoResponse(NoResponse::InvalidClientId),
         },
@@ -205,7 +205,7 @@ fn handle_renew(
 
     // message MUST include a ClientIdentifier option
     let client_id = match msg.client_id() {
-        Some(bytes) => match shadow_dhcpv6::Duid::new(bytes.to_vec()) {
+        Some(bytes) => match shadowdhcp::Duid::new(bytes.to_vec()) {
             Some(duid) => duid,
             None => return DhcpV6Response::NoResponse(NoResponse::InvalidClientId),
         },
@@ -359,7 +359,7 @@ fn handle_request(
     // * does not include a Server Identifier option
     // * includes a Server Identifier option that does not match this server's DUID
     let client_id = match msg.client_id() {
-        Some(bytes) => match shadow_dhcpv6::Duid::new(bytes.to_vec()) {
+        Some(bytes) => match shadowdhcp::Duid::new(bytes.to_vec()) {
             Some(duid) => duid,
             None => return DhcpV6Response::NoResponse(NoResponse::InvalidClientId),
         },
@@ -467,7 +467,7 @@ fn handle_rebind(
 ) -> DhcpV6Response {
     // Message MUST include a ClientIdentifier option
     let client_id = match msg.client_id() {
-        Some(bytes) => match shadow_dhcpv6::Duid::new(bytes.to_vec()) {
+        Some(bytes) => match shadowdhcp::Duid::new(bytes.to_vec()) {
             Some(duid) => duid,
             None => return DhcpV6Response::NoResponse(NoResponse::InvalidClientId),
         },
@@ -630,7 +630,7 @@ pub fn handle_message(
         MessageType::Rebind => handle_rebind(config, reservations, leases, msg, relay_msg),
         _ => {
             error!(
-                "MessageType `{:?}` not implemented by ddhcpv6",
+                "MessageType `{:?}` not implemented by shadowdhcp",
                 msg.msg_type()
             );
             DhcpV6Response::NoResponse(NoResponse::Discarded)

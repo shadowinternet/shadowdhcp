@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use shadow_dhcpv6::Option1837;
+use shadowdhcp::Option1837;
 
 pub type Option1837ExtractorFn = fn(opt: &Option1837) -> Option<Option1837>;
 

@@ -8,7 +8,7 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use shadow_dhcpv6::{logging, Reservation};
+use shadowdhcp::{logging, Reservation};
 
 use crate::analytics::events::DhcpEvent;
 use crate::config::Config;

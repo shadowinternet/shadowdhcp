@@ -7,7 +7,7 @@ use dashmap::DashMap;
 use tracing::info;
 
 use crate::reservationdb::ReservationDb;
-use shadow_dhcpv6::{LeaseV4, LeaseV6, Option82, Reservation};
+use shadowdhcp::{LeaseV4, LeaseV6, Option82, Reservation};
 
 /// Wrapper for Option82 with timestamp for expiry tracking
 #[derive(Clone)]
@@ -159,7 +159,7 @@ impl LeaseDb {
 mod tests {
     use super::*;
     use ipnet::Ipv6Net;
-    use shadow_dhcpv6::Duid;
+    use shadowdhcp::Duid;
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::thread::sleep;
 

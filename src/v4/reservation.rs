@@ -3,7 +3,7 @@ use std::sync::Arc;
 use advmac::MacAddr6;
 use compact_str::CompactString;
 use dhcproto::v4::relay::RelayAgentInformation;
-use shadow_dhcpv6::{Option82, RelayAgentInformationExt, Reservation};
+use shadowdhcp::{Option82, RelayAgentInformationExt, Reservation};
 use tracing::debug;
 
 use super::extractors::NamedOption82Extractor;

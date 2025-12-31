@@ -1,5 +1,5 @@
 #!/sbin/openrc-run
-# OpenRC init script for shadow_dhcpv6 DHCP server
+# OpenRC init script for shadowdhcp DHCP server
 
 name="shadowdhcp"
 description="Reservation-only DHCPv4/DHCPv6 server"

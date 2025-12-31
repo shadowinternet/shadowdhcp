@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::{net::Ipv4Addr, sync::Arc};
 use tracing::{debug, error, field, info, instrument, warn, Span};
 
-use shadow_dhcpv6::{Reservation, V4Key};
+use shadowdhcp::{Reservation, V4Key};
 
 use crate::analytics::events::ReservationMatch;
 use crate::config::Config;

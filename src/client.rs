@@ -1,5 +1,5 @@
 use dhcproto::{v6, Decodable, Encodable};
-use shadow_dhcpv6::logging;
+use shadowdhcp::logging;
 use tracing::debug;
 
 use std::net::{Ipv6Addr, UdpSocket};

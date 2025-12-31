@@ -9,7 +9,7 @@ use std::{
 use crate::v4::extractors::{self as v4_extractors, NamedOption82Extractor};
 use crate::v6::extractors::{self as v6_extractors, NamedOption1837Extractor};
 use crate::v6::mac_extractors::MacExtractor;
-use shadow_dhcpv6::{Duid, V4Subnet};
+use shadowdhcp::{Duid, V4Subnet};
 
 /// Server wide configuration
 pub struct Config {
