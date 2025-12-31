@@ -27,7 +27,7 @@ pub struct ResponseMessage {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum NoResponseReason {
+pub enum NoResponse {
     NoReservation,
     NoValidMac,
     NoServerSubnet,
@@ -36,15 +36,15 @@ pub enum NoResponseReason {
     NoMessageType,
 }
 
-impl NoResponseReason {
+impl NoResponse {
     pub fn as_str(&self) -> &'static str {
         match self {
-            NoResponseReason::NoReservation => "NoReservation",
-            NoResponseReason::NoValidMac => "NoValidMac",
-            NoResponseReason::NoServerSubnet => "NoServerSubnet",
-            NoResponseReason::Discarded => "Discarded",
-            NoResponseReason::WrongServerId => "WrongServerId",
-            NoResponseReason::NoMessageType => "NoMessageType",
+            NoResponse::NoReservation => "NoReservation",
+            NoResponse::NoValidMac => "NoValidMac",
+            NoResponse::NoServerSubnet => "NoServerSubnet",
+            NoResponse::Discarded => "Discarded",
+            NoResponse::WrongServerId => "WrongServerId",
+            NoResponse::NoMessageType => "NoMessageType",
         }
     }
 }
@@ -55,7 +55,7 @@ impl NoResponseReason {
 /// message back to the client or intentionally remain silent.
 pub enum DhcpV4Response {
     Message(ResponseMessage),
-    NoResponse(NoResponseReason),
+    NoResponse(NoResponse),
 }
 
 /// 4.3 A DHCP server can receive the following messages from a client:
@@ -74,25 +74,25 @@ pub fn handle_message(
     let message_type = match msg.opcode() {
         v4::Opcode::BootRequest => match msg.message_type() {
             Some(mt) => mt,
-            None => return DhcpV4Response::NoResponse(NoResponseReason::NoMessageType),
+            None => return DhcpV4Response::NoResponse(NoResponse::NoMessageType),
         },
         // Servers don't receive BootReply
-        v4::Opcode::BootReply => return DhcpV4Response::NoResponse(NoResponseReason::Discarded),
+        v4::Opcode::BootReply => return DhcpV4Response::NoResponse(NoResponse::Discarded),
         // Skip handling Unknown
-        v4::Opcode::Unknown(_) => return DhcpV4Response::NoResponse(NoResponseReason::Discarded),
+        v4::Opcode::Unknown(_) => return DhcpV4Response::NoResponse(NoResponse::Discarded),
     };
 
     match message_type {
         v4::MessageType::Discover => handle_discover(reservations, config, &msg),
         v4::MessageType::Request => handle_request(reservations, leases, config, &msg),
-        v4::MessageType::Decline => DhcpV4Response::NoResponse(NoResponseReason::Discarded),
-        v4::MessageType::Release => DhcpV4Response::NoResponse(NoResponseReason::Discarded),
+        v4::MessageType::Decline => DhcpV4Response::NoResponse(NoResponse::Discarded),
+        v4::MessageType::Release => DhcpV4Response::NoResponse(NoResponse::Discarded),
         // If a client has obtained a network address through some other means (e.g., manual configuration), it
         // may use a DHCPINFORM request message to obtain other local configuration parameters. Unicast reply sent
         // to the client.
-        v4::MessageType::Inform => DhcpV4Response::NoResponse(NoResponseReason::Discarded),
+        v4::MessageType::Inform => DhcpV4Response::NoResponse(NoResponse::Discarded),
         // Other messages are not valid for a server to receive
-        _ => DhcpV4Response::NoResponse(NoResponseReason::Discarded),
+        _ => DhcpV4Response::NoResponse(NoResponse::Discarded),
     }
 }
 
@@ -111,7 +111,7 @@ fn handle_discover(
 ) -> DhcpV4Response {
     let mac_addr = match MacAddr6::try_from(msg.chaddr()).ok() {
         Some(ma) => ma,
-        None => return DhcpV4Response::NoResponse(NoResponseReason::NoValidMac),
+        None => return DhcpV4Response::NoResponse(NoResponse::NoValidMac),
     };
     Span::current().record("mac", field::display(mac_addr));
     info!("DHCPDiscover");
@@ -128,7 +128,7 @@ fn handle_discover(
         }
         None => {
             info!("No reservation found");
-            return DhcpV4Response::NoResponse(NoResponseReason::NoReservation);
+            return DhcpV4Response::NoResponse(NoResponse::NoReservation);
         }
     };
 
@@ -141,7 +141,7 @@ fn handle_discover(
         Some((gw, subnet)) => (gw, subnet),
         None => {
             error!("Couldn't find configured subnet for {}", &reservation.ipv4);
-            return DhcpV4Response::NoResponse(NoResponseReason::NoServerSubnet);
+            return DhcpV4Response::NoResponse(NoResponse::NoServerSubnet);
         }
     };
 
@@ -210,7 +210,7 @@ fn handle_request(
 
     let mac_addr = match MacAddr6::try_from(msg.chaddr()).ok() {
         Some(ma) => ma,
-        None => return DhcpV4Response::NoResponse(NoResponseReason::NoValidMac),
+        None => return DhcpV4Response::NoResponse(NoResponse::NoValidMac),
     };
     Span::current().record("mac", field::display(mac_addr));
     info!("DHCPRequest");
@@ -227,7 +227,7 @@ fn handle_request(
         }
         None => {
             info!("No reservation found");
-            return DhcpV4Response::NoResponse(NoResponseReason::NoReservation);
+            return DhcpV4Response::NoResponse(NoResponse::NoReservation);
         }
     };
 
@@ -240,7 +240,7 @@ fn handle_request(
         Some((gw, subnet)) => (gw, subnet),
         None => {
             warn!("Couldn't find configured subnet for {}", &reservation.ipv4);
-            return DhcpV4Response::NoResponse(NoResponseReason::NoServerSubnet);
+            return DhcpV4Response::NoResponse(NoResponse::NoServerSubnet);
         }
     };
 
@@ -266,7 +266,7 @@ fn handle_request(
             debug!("variant: selecting");
             if server_id != &config.v4_server_id {
                 info!(%server_id, "SELECTING server id did not match");
-                return DhcpV4Response::NoResponse(NoResponseReason::WrongServerId);
+                return DhcpV4Response::NoResponse(NoResponse::WrongServerId);
             }
             requested_ip
         }
@@ -284,7 +284,7 @@ fn handle_request(
         }
         _ => {
             info!("Unrecognized DHCPREQUEST variant");
-            return DhcpV4Response::NoResponse(NoResponseReason::Discarded);
+            return DhcpV4Response::NoResponse(NoResponse::Discarded);
         }
     };
 

@@ -31,7 +31,7 @@ pub struct ResponseMessage {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum NoResponseReason {
+pub enum NoResponse {
     NoClientId,
     UnexpectedServerId,
     WrongServerId,
@@ -40,15 +40,15 @@ pub enum NoResponseReason {
     Discarded,
 }
 
-impl NoResponseReason {
+impl NoResponse {
     pub fn as_str(&self) -> &'static str {
         match self {
-            NoResponseReason::NoClientId => "NoClientId",
-            NoResponseReason::UnexpectedServerId => "UnexpectedServerId",
-            NoResponseReason::WrongServerId => "WrongServerId",
-            NoResponseReason::NoServerId => "NoServerId",
-            NoResponseReason::NoReservation => "NoReservation",
-            NoResponseReason::Discarded => "Discarded",
+            NoResponse::NoClientId => "NoClientId",
+            NoResponse::UnexpectedServerId => "UnexpectedServerId",
+            NoResponse::WrongServerId => "WrongServerId",
+            NoResponse::NoServerId => "NoServerId",
+            NoResponse::NoReservation => "NoReservation",
+            NoResponse::Discarded => "Discarded",
         }
     }
 }
@@ -59,7 +59,7 @@ impl NoResponseReason {
 /// message back to the client or intentionally remain silent.
 pub enum DhcpV6Response {
     Message(ResponseMessage),
-    NoResponse(NoResponseReason),
+    NoResponse(NoResponse),
 }
 
 #[instrument(skip(config, reservations, leases, msg, relay_msg),
@@ -75,7 +75,7 @@ fn handle_solicit(
     // option or that do include a Server Identifier option
     let client_id = match msg.client_id() {
         Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
-        None => return DhcpV6Response::NoResponse(NoResponseReason::NoClientId),
+        None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
 
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
@@ -83,7 +83,7 @@ fn handle_solicit(
 
     if msg.server_id().is_some() {
         info!("Client included a server_id field, ignoring");
-        return DhcpV6Response::NoResponse(NoResponseReason::UnexpectedServerId);
+        return DhcpV6Response::NoResponse(NoResponse::UnexpectedServerId);
     }
 
     // Rapid Commit option - The client may request the expedited two-message exchange
@@ -179,7 +179,7 @@ fn handle_solicit(
         }
         None => {
             info!("Solicit request with no reservation for DUID");
-            DhcpV6Response::NoResponse(NoResponseReason::NoReservation)
+            DhcpV6Response::NoResponse(NoResponse::NoReservation)
         }
     }
 }
@@ -199,7 +199,7 @@ fn handle_renew(
     // message MUST include a ClientIdentifier option
     let client_id = match msg.client_id() {
         Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
-        None => return DhcpV6Response::NoResponse(NoResponseReason::NoClientId),
+        None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
@@ -207,8 +207,8 @@ fn handle_renew(
     // message MUST include ServerIdentifier option AND match this Server's identity
     match msg.server_id() {
         Some(bytes) if bytes == config.v6_server_id.bytes => (),
-        Some(_) => return DhcpV6Response::NoResponse(NoResponseReason::WrongServerId),
-        None => return DhcpV6Response::NoResponse(NoResponseReason::NoServerId),
+        Some(_) => return DhcpV6Response::NoResponse(NoResponse::WrongServerId),
+        None => return DhcpV6Response::NoResponse(NoResponse::NoServerId),
     }
 
     let mut reply = Message::new_with_id(MessageType::Reply, msg.xid());
@@ -348,7 +348,7 @@ fn handle_request(
     // * includes a Server Identifier option that does not match this server's DUID
     let client_id = match msg.client_id() {
         Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
-        None => return DhcpV6Response::NoResponse(NoResponseReason::NoClientId),
+        None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
@@ -356,8 +356,8 @@ fn handle_request(
     // message MUST include ServerIdentifier option AND match this Server's identity
     match msg.server_id() {
         Some(bytes) if bytes == config.v6_server_id.bytes => (),
-        Some(_) => return DhcpV6Response::NoResponse(NoResponseReason::WrongServerId),
-        None => return DhcpV6Response::NoResponse(NoResponseReason::NoServerId),
+        Some(_) => return DhcpV6Response::NoResponse(NoResponse::WrongServerId),
+        None => return DhcpV6Response::NoResponse(NoResponse::NoServerId),
     }
 
     let reserved_address = find_reservation(
@@ -431,7 +431,7 @@ fn handle_request(
                 reservation_match: Some(match_info),
             })
         }
-        None => DhcpV6Response::NoResponse(NoResponseReason::NoReservation),
+        None => DhcpV6Response::NoResponse(NoResponse::NoReservation),
     }
 }
 
@@ -451,7 +451,7 @@ fn handle_rebind(
     // Message MUST include a ClientIdentifier option
     let client_id = match msg.client_id() {
         Some(bytes) => shadow_dhcpv6::Duid::from(bytes.to_vec()),
-        None => return DhcpV6Response::NoResponse(NoResponseReason::NoClientId),
+        None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
     Span::current().record("client_id", field::display(&client_id.to_colon_string()));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
@@ -586,7 +586,7 @@ pub fn handle_message(
         // Two-message exchange (rapid commit) - Solicit -> Reply
         MessageType::Solicit => handle_solicit(config, reservations, leases, msg, relay_msg),
         // Servers always discard Advertise
-        MessageType::Advertise => DhcpV6Response::NoResponse(NoResponseReason::Discarded),
+        MessageType::Advertise => DhcpV6Response::NoResponse(NoResponse::Discarded),
         // A client sends a Request as part of the 4 message exchange to receive an initial address/prefix
         // https://datatracker.ietf.org/doc/html/rfc8415#section-16.4
         MessageType::Request => handle_request(config, reservations, leases, msg, relay_msg),
@@ -611,7 +611,7 @@ pub fn handle_message(
                 "MessageType `{:?}` not implemented by ddhcpv6",
                 msg.msg_type()
             );
-            DhcpV6Response::NoResponse(NoResponseReason::Discarded)
+            DhcpV6Response::NoResponse(NoResponse::Discarded)
         }
     }
 }
