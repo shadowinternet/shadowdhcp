@@ -91,7 +91,7 @@ pub fn tcp_writer<A: ToSocketAddrs + Debug>(address: A, rx: mpsc::Receiver<DhcpE
                     Ok(w) => writer = Some(w),
                     Err(_) => {
                         // Drain pending events to prevent unbounded memory growth
-                        while let Ok(_) = rx.try_recv() {
+                        while rx.try_recv().is_ok() {
                             dropped += 1;
                         }
                         std::thread::sleep(RECONNECT_TIMEOUT);
@@ -102,7 +102,7 @@ pub fn tcp_writer<A: ToSocketAddrs + Debug>(address: A, rx: mpsc::Receiver<DhcpE
                     Err(_) => {
                         writer = None;
                         // Drain pending events to prevent unbounded memory growth
-                        while let Ok(_) = rx.try_recv() {
+                        while rx.try_recv().is_ok() {
                             dropped += 1;
                         }
                         std::thread::sleep(RECONNECT_TIMEOUT);

@@ -262,7 +262,7 @@ impl DhcpEventV6 {
             message_type: Self::message_type_str(input_msg.msg_type()),
             xid: format!(
                 "{:02x}{:02x}{:02x}",
-                input_msg.xid().get(0).copied().unwrap_or(0),
+                input_msg.xid().first().copied().unwrap_or(0),
                 input_msg.xid().get(1).copied().unwrap_or(0),
                 input_msg.xid().get(2).copied().unwrap_or(0)
             ),
@@ -316,7 +316,7 @@ impl DhcpEventV6 {
             message_type: Self::message_type_str(input_msg.msg_type()),
             xid: format!(
                 "{:02x}{:02x}{:02x}",
-                input_msg.xid().get(0).copied().unwrap_or(0),
+                input_msg.xid().first().copied().unwrap_or(0),
                 input_msg.xid().get(1).copied().unwrap_or(0),
                 input_msg.xid().get(2).copied().unwrap_or(0)
             ),
