@@ -27,7 +27,7 @@ mod v4;
 mod v6;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const GIT_HASH: Option<&str> = option_env!("GIT_HASH");
+const GITHUB_SHA: Option<&str> = option_env!("GITHUB_SHA");
 
 fn main() {
     let mut args = pico_args::Arguments::from_env();
@@ -54,7 +54,11 @@ fn main() {
         return;
     }
     if args.contains("--version") {
-        println!("{} ({})", VERSION, GIT_HASH.unwrap_or("unknown"));
+        let commit = match GITHUB_SHA {
+            Some(sha) => &sha[0..7],
+            None => "unknown",
+        };
+        println!("{VERSION} ({commit})");
         return;
     }
 
