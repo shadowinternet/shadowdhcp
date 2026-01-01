@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            suffix: linux-glibc
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            suffix: linux-musl
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            suffix: windows
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build shadowdhcp
+        run: cargo build --profile release-lto --target ${{ matrix.target }} --bin shadowdhcp
+
+      - name: Package binary (Unix)
+        if: runner.os != 'Windows'
+        run: cp target/${{ matrix.target }}/release-lto/shadowdhcp shadowdhcp-${{ matrix.suffix }}
+
+      - name: Package binary (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp target/${{ matrix.target }}/release-lto/shadowdhcp.exe shadowdhcp-${{ matrix.suffix }}.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadowdhcp-${{ matrix.suffix }}
+          path: shadowdhcp-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
