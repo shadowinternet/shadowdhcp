@@ -178,6 +178,7 @@ curl -s "http://your-clickhouse-server:8123/?query=SELECT%201" \
 rc-service shadowdhcp start
 rc-service shadowdhcp stop
 rc-service shadowdhcp restart
+rc-service shadowdhcp reload   # Reload reservations (SIGHUP)
 rc-service shadowdhcp status
 ```
 

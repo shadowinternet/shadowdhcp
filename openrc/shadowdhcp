@@ -12,6 +12,15 @@ command_group="shadowdhcp"
 
 pidfile="/run/${RC_SVCNAME}.pid"
 
+extra_started_commands="reload"
+description_reload="Reload DHCP reservations"
+
+reload() {
+    ebegin "Reloading ${name}"
+    start-stop-daemon --signal HUP --pidfile "${pidfile}"
+    eend $?
+}
+
 # Logs go to file - Vector can optionally tail these
 output_log="/var/log/shadowdhcp/shadowdhcp.log"
 error_log="/var/log/shadowdhcp/shadowdhcp.log"
