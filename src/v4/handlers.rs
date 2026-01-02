@@ -157,7 +157,6 @@ fn handle_discover(
     reply.set_opcode(v4::Opcode::BootReply);
     reply.set_secs(0);
     reply.set_flags(msg.flags());
-    reply.set_sname("dhcp.shadowinter.net".as_bytes());
 
     let opts = reply.opts_mut();
 
@@ -257,7 +256,6 @@ fn handle_request(
     reply.set_secs(0);
     // TODO: check flags are correct
     reply.set_flags(msg.flags());
-    reply.set_sname("dhcp.shadowinter.net".as_bytes());
 
     // select one of the four variants:
     let variant_tuple = (msg.server_id(), &msg.ciaddr(), msg.requested_ip_addr());
