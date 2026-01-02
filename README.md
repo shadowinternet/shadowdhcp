@@ -1,16 +1,30 @@
 # shadowdhcp
 
-A reservation only DHCPv4 and DHCPv6 server designed for internet service providers.
+A reservation-only DHCPv4 and DHCPv6 server designed for internet service providers.
 
-⚠⚠ Please use the [Kea DHCP server](https://www.isc.org/kea/) for more options and features! ⚠⚠
+> **Beta Software** - This project is under active development. APIs and configuration formats may change.
 
-shadowdhcp:
+## Current Limitations
 
-* Reservation only
+* No high availability or clustering
+* Single-threaded per protocol for simplicity. All logic is already thread safe, modify main.rs thread spawning to make the server multi-threaded or async
+* Lease times are currently hardcoded
+* No duplicate reservation checking
+* Does not persist MAC to Option82 bindings to disk
+
+For a mature, full-featured DHCP server, use the [Kea DHCP server](https://www.isc.org/kea/).
+
+## Features
+
+* Reservation only, external software generates the reservations. E.g., ISP billing system
 * In memory only, no database backend
-* No high availability
+* Simple configuration with ids.json, config.json, and reservations.json
 * Only responds to relayed or unicast requests
 * IPv6 IA_NA and IA_PD are required for each reservation
+* Reload reservations from disk on SIGHUP
+* Management tcp socket to update reservations from another program
+* Send metrics to [vector](https://vector.dev) which can then be forwarded to Clickhouse or other databases. See `vector.toml`, `clickhouse_schema.sql` and `openrc` folder
+* Runs on Linux (glibc, or musl) and Windows. Alpine Linux packages will be made available through a hosted [repo](https://github.com/shadowinternet/aports)
 * Supports dynamic IPv4 Option82 to IPv6 mappings. When a client receives an IPv4 address via Option82, the server remembers their MAC address and can use the MAC to deliver IPv6 address information
 
 ## Extractors
