@@ -137,23 +137,3 @@ IPv6: duid -> option 18 / option 37 -> mac -> option82
     }
 ]
 ```
-
-## Debugging
-
-Run the server with RUST_LOG=trace to print hex dumps of packets:
-
-```
-# RUST_LOG=trace target/release/server
-```
-
-Then convert to a pcap with:
-
-```
-text2pcap -u 546,547 packets.txt packets.pcap
-```
-
-Windows:
-
-```
-& "C:\Program Files\Wireshark\text2pcap.exe" packets.txt packets.pcap
-```
