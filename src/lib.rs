@@ -21,12 +21,16 @@ pub struct Reservation {
     // customer LAN prefix delegation /56
     pub ipv6_pd: Ipv6Net,
     // customer router WAN mac address. Overrides option82 settings
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mac: Option<MacAddr6>,
     // customer router duid. Overrides option82 settings, and mac setting for ipv6
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duid: Option<Duid>,
     // option82 info used if mac is not specified
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub option82: Option<Option82>,
     // option1837 contains dhcpv6 option 18 and option 37, the v6 equivalent to option 82
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub option1837: Option<Option1837>,
 }
 
