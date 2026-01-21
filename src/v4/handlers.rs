@@ -301,7 +301,6 @@ fn handle_request(
         opts.insert(DhcpOption::Renewal(RENEWAL_TIME));
         opts.insert(DhcpOption::Rebinding(REBINDING_TIME));
         // TODO: add support for parameter request list option
-        opts.insert(DhcpOption::End);
 
         let opt82 = match reservation.v4_key() {
             Some(V4Key::Option82(opt)) => Some(opt),
@@ -327,7 +326,6 @@ fn handle_request(
         let opts = reply.opts_mut();
         opts.insert(DhcpOption::MessageType(v4::MessageType::Nak));
         opts.insert(DhcpOption::ServerIdentifier(config.v4_server_id));
-        opts.insert(DhcpOption::End);
     }
 
     DhcpV4Response::Message(ResponseMessage {
