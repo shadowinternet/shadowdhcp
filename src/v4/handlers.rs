@@ -168,7 +168,6 @@ fn handle_discover(
     opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
     opts.insert(DhcpOption::Renewal(RENEWAL_TIME));
     opts.insert(DhcpOption::Rebinding(REBINDING_TIME));
-    opts.insert(DhcpOption::End);
 
     DhcpV4Response::Message(ResponseMessage {
         message: reply,
