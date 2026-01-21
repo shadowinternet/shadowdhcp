@@ -8,8 +8,13 @@
     {
       "net": "100.100.2.0/24",
       "gateway": "100.100.3.1"
+    },
+    {
+      "net": "100.110.1.0/24",
+      "gateway": "100.110.1.1"
     }
   ],
+  "mac_extractors": ["client_linklayer_address", "peer_addr_eui64"],
   "option82_extractors": [
     "remote_only",
     "subscriber_only",
