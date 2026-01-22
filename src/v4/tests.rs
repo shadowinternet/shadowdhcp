@@ -28,10 +28,12 @@ fn create_test_env() -> (Config, ReservationDb, LeaseDb) {
             V4Subnet {
                 net: "192.168.1.0/24".parse().unwrap(),
                 gateway: Ipv4Addr::new(192, 168, 1, 1),
+                reply_prefix_len: None,
             },
             V4Subnet {
                 net: "10.10.0.0/16".parse().unwrap(),
                 gateway: Ipv4Addr::new(10, 10, 0, 1),
+                reply_prefix_len: None,
             },
         ],
         v6_server_id: Duid::from(vec![0, 1, 2, 3]),
@@ -830,5 +832,51 @@ fn offer_should_include_t1_renewal_time() {
         has_t2,
         "DHCPOFFER SHOULD include T2 (Rebinding Time = {})",
         REBINDING_TIME
+    );
+}
+
+#[test]
+fn discover_uses_reply_prefix_len_override() {
+    let (mut config, reservations, leases) = create_test_env();
+    config.subnets_v4[0].reply_prefix_len = Some(32);
+    let msg = create_discover(TEST_MAC, 0xABCD1234);
+
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => {
+            panic!("Expected OFFER, got NoResponse({:?})", reason)
+        }
+    };
+
+    let has_32_mask = reply.opts().iter().any(|(_, opt)| {
+        matches!(opt, DhcpOption::SubnetMask(mask) if *mask == Ipv4Addr::new(255, 255, 255, 255))
+    });
+    assert!(
+        has_32_mask,
+        "SubnetMask should be /32 (255.255.255.255) when reply_prefix_len is set to 32"
+    );
+}
+
+#[test]
+fn request_uses_reply_prefix_len_override() {
+    let (mut config, reservations, leases) = create_test_env();
+    config.subnets_v4[0].reply_prefix_len = Some(32);
+
+    let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
+    let msg = create_request_selecting(TEST_MAC, 0xEFEF1234, config.v4_server_id, reserved_ip);
+
+    let reply = match handle_message(&reservations, &leases, &config, &msg) {
+        DhcpV4Response::Message(resp) => resp.message,
+        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
+    };
+
+    assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
+
+    let has_32_mask = reply.opts().iter().any(|(_, opt)| {
+        matches!(opt, DhcpOption::SubnetMask(mask) if *mask == Ipv4Addr::new(255, 255, 255, 255))
+    });
+    assert!(
+        has_32_mask,
+        "SubnetMask should be /32 (255.255.255.255) when reply_prefix_len is set to 32"
     );
 }

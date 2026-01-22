@@ -136,7 +136,7 @@ fn handle_discover(
         .subnets_v4
         .iter()
         .find(|subnet| subnet.net.contains(&reservation.ipv4))
-        .map(|subnet| (subnet.gateway, subnet.net.netmask()))
+        .map(|subnet| (subnet.gateway, subnet.reply_netmask()))
     {
         Some((gw, subnet)) => (gw, subnet),
         None => {
@@ -233,7 +233,7 @@ fn handle_request(
         .subnets_v4
         .iter()
         .find(|subnet| subnet.net.contains(&reservation.ipv4))
-        .map(|subnet| (subnet.gateway, subnet.net.netmask()))
+        .map(|subnet| (subnet.gateway, subnet.reply_netmask()))
     {
         Some((gw, subnet)) => (gw, subnet),
         None => {

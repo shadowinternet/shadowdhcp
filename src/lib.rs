@@ -55,6 +55,34 @@ pub enum V4Key {
 pub struct V4Subnet {
     pub net: Ipv4Net,
     pub gateway: Ipv4Addr,
+    /// Optional override for the subnet mask sent in DHCP replies
+    pub reply_prefix_len: Option<u8>,
+}
+
+impl V4Subnet {
+    /// Returns the subnet mask to use in DHCP replies.
+    /// Uses `reply_prefix_len` if set, otherwise uses the prefix from `net`.
+    pub fn reply_netmask(&self) -> Ipv4Addr {
+        let prefix_len = self.reply_prefix_len.unwrap_or(self.net.prefix_len());
+        // Convert prefix length to netmask by setting the high bits
+        if prefix_len == 0 {
+            Ipv4Addr::new(0, 0, 0, 0)
+        } else if prefix_len >= 32 {
+            Ipv4Addr::new(255, 255, 255, 255)
+        } else {
+            let mask = !((1u32 << (32 - prefix_len)) - 1);
+            Ipv4Addr::from(mask)
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if let Some(len) = self.reply_prefix_len {
+            if len > 32 {
+                return Err("reply_prefix_len must be between 0 and 32");
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -296,5 +324,71 @@ mod tests {
         let parsed_json: DuidJson = serde_json::from_str(json).unwrap();
 
         assert_eq!(parsed_json.duid, duid);
+    }
+
+    #[test]
+    fn v4subnet_reply_netmask_uses_net_prefix_when_override_not_set() {
+        let subnet = V4Subnet {
+            net: "192.168.1.0/24".parse().unwrap(),
+            gateway: Ipv4Addr::new(192, 168, 1, 1),
+            reply_prefix_len: None,
+        };
+        assert_eq!(subnet.reply_netmask(), Ipv4Addr::new(255, 255, 255, 0));
+
+        let subnet_16 = V4Subnet {
+            net: "10.0.0.0/16".parse().unwrap(),
+            gateway: Ipv4Addr::new(10, 0, 0, 1),
+            reply_prefix_len: None,
+        };
+        assert_eq!(subnet_16.reply_netmask(), Ipv4Addr::new(255, 255, 0, 0));
+    }
+
+    #[test]
+    fn v4subnet_reply_netmask_uses_override_when_set() {
+        let subnet = V4Subnet {
+            net: "192.168.1.0/24".parse().unwrap(),
+            gateway: Ipv4Addr::new(192, 168, 1, 1),
+            reply_prefix_len: Some(32),
+        };
+        assert_eq!(subnet.reply_netmask(), Ipv4Addr::new(255, 255, 255, 255));
+
+        let subnet_30 = V4Subnet {
+            net: "192.168.1.0/24".parse().unwrap(),
+            gateway: Ipv4Addr::new(192, 168, 1, 1),
+            reply_prefix_len: Some(30),
+        };
+        assert_eq!(subnet_30.reply_netmask(), Ipv4Addr::new(255, 255, 255, 252));
+    }
+
+    #[test]
+    fn v4subnet_validate_accepts_valid_prefix_lengths() {
+        for prefix in 0..=32 {
+            let subnet = V4Subnet {
+                net: "192.168.1.0/24".parse().unwrap(),
+                gateway: Ipv4Addr::new(192, 168, 1, 1),
+                reply_prefix_len: Some(prefix),
+            };
+            assert!(
+                subnet.validate().is_ok(),
+                "prefix {} should be valid",
+                prefix
+            );
+        }
+    }
+
+    #[test]
+    fn v4subnet_validate_rejects_invalid_prefix_lengths() {
+        for prefix in [33, 64, 128, 255] {
+            let subnet = V4Subnet {
+                net: "192.168.1.0/24".parse().unwrap(),
+                gateway: Ipv4Addr::new(192, 168, 1, 1),
+                reply_prefix_len: Some(prefix),
+            };
+            assert!(
+                subnet.validate().is_err(),
+                "prefix {} should be invalid",
+                prefix
+            );
+        }
     }
 }

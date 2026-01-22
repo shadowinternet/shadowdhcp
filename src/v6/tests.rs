@@ -30,6 +30,7 @@ fn create_env() -> (Config, ReservationDb, LeaseDb) {
         subnets_v4: vec![V4Subnet {
             net: "192.168.0.0/24".parse().unwrap(),
             gateway: "192.168.0.1".parse().unwrap(),
+            reply_prefix_len: None,
         }],
         v6_server_id: Duid::from(vec![0, 1, 2, 3]),
         option1837_extractors: v6_extractors::get_all_extractors().into_iter().collect(),

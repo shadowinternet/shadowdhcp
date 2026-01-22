@@ -65,6 +65,10 @@ pub enum ConfigError {
         path: PathBuf,
     },
     LogLevel(String),
+    InvalidSubnet {
+        subnet: String,
+        reason: &'static str,
+    },
 }
 
 trait PathContext<T> {
@@ -121,6 +125,9 @@ impl fmt::Display for ConfigError {
             ConfigError::LogLevel(value) => {
                 writeln!(f, "Invalid log_level: `{value}`")?;
                 write!(f, "Expected one of: trace, debug, info, warn, error")
+            }
+            ConfigError::InvalidSubnet { subnet, reason } => {
+                write!(f, "Invalid subnet `{subnet}`: {reason}")
             }
         }
     }
@@ -187,6 +194,16 @@ impl Config {
             }
             _ => tracing::Level::INFO,
         };
+
+        // Validate subnet configurations
+        for subnet in &server_config.subnets_v4 {
+            subnet
+                .validate()
+                .map_err(|reason| ConfigError::InvalidSubnet {
+                    subnet: subnet.net.to_string(),
+                    reason,
+                })?;
+        }
 
         // Default to ClientLinklayerAddress if no extractors configured
         let mac_extractors = server_config
