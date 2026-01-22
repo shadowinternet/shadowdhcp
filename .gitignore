@@ -1,3 +1,4 @@
 /target
 .cargo
 deploy.sh
+.claude
