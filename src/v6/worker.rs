@@ -70,7 +70,7 @@ pub fn v6_worker(
                 trace!("RelayMessage: {:#?}", msg);
                 // get the inner msg from the option
                 let inner_msg = match msg.opts().iter().find_map(|opt| match opt {
-                    DhcpOption::RelayMsg(msg) => Some(msg.clone()),
+                    DhcpOption::RelayMsg(msg) => Some(msg),
                     _ => None,
                 }) {
                     Some(msg) => match msg {
@@ -84,7 +84,7 @@ pub fn v6_worker(
                     &config.load(),
                     &reservations.load(),
                     &leases,
-                    &inner_msg,
+                    inner_msg,
                     &msg,
                 ) {
                     DhcpV6Response::NoResponse(reason) => {
@@ -95,7 +95,7 @@ pub fn v6_worker(
                                 SocketAddr::V4(_) => continue, // DHCPv6 requires IPv6
                             };
                             let event =
-                                DhcpEventV6::failed(&inner_msg, &msg, relay_addr, reason.as_str());
+                                DhcpEventV6::failed(inner_msg, &msg, relay_addr, reason.as_str());
                             let _ = event_sender.send(DhcpEvent::V6(event));
                         }
                     }
@@ -139,7 +139,7 @@ pub fn v6_worker(
                                         SocketAddr::V4(_) => continue, // DHCPv6 requires IPv6
                                     };
                                     let event = DhcpEventV6::success(
-                                        &inner_msg,
+                                        inner_msg,
                                         &msg,
                                         relay_addr,
                                         resp.reservation.as_deref(),
