@@ -1,12 +1,8 @@
 # shadowdhcp Installation Guide (Alpine Linux / OpenRC)
 
-This guide covers installing shadowdhcp with optional Vector telemetry on Alpine Linux.
+This guide covers manually installing shadowdhcp with optional Vector telemetry on Alpine Linux.
 
-## Prerequisites
-
-```bash
-apk add logrotate libcap
-```
+For easier installation, see the Installation From Repository guide.
 
 ## 1. Install shadowdhcp
 
@@ -23,9 +19,6 @@ adduser -D -H -s /sbin/nologin -g "shadowdhcp service" shadowdhcp
 # Build or copy the binary
 cp shadowdhcp /usr/local/bin/shadowdhcp
 chmod +x /usr/local/bin/shadowdhcp
-
-# Allow binding to privileged ports (67/udp for DHCPv4, 547/udp for DHCPv6)
-setcap 'cap_net_bind_service=+ep' /usr/local/bin/shadowdhcp
 ```
 
 ### Create configuration directory
@@ -58,9 +51,11 @@ rc-update add shadowdhcp default
 rc-service shadowdhcp start
 ```
 
-### Install logrotate configuration
+## 2. Install logrotate (optional)
 
 ```bash
+# automatically clean up log files to prevent disk exhaustion
+apk add logrotate
 cp openrc/shadowdhcp.logrotate /etc/logrotate.d/shadowdhcp
 ```
 
@@ -70,7 +65,7 @@ Logrotate runs daily via cron. To test manually:
 logrotate -f /etc/logrotate.d/shadowdhcp
 ```
 
-## 2. Install Vector (Optional - for telemetry)
+## 3. Install Vector (optional)
 
 Vector collects DHCP events and traces, sending them to ClickHouse.
 
@@ -175,20 +170,20 @@ curl -s "http://your-clickhouse-server:8123/?query=SELECT%201" \
 ### shadowdhcp
 
 ```bash
-rc-service shadowdhcp start
-rc-service shadowdhcp stop
-rc-service shadowdhcp restart
-rc-service shadowdhcp reload   # Reload reservations (SIGHUP)
-rc-service shadowdhcp status
+service shadowdhcp start
+service shadowdhcp stop
+service shadowdhcp restart
+service shadowdhcp reload   # Reload reservations (SIGHUP)
+service shadowdhcp status
 ```
 
 ### Vector
 
 ```bash
-rc-service vector start
-rc-service vector stop
-rc-service vector restart
-rc-service vector status
+service vector start
+service vector stop
+service vector restart
+service vector status
 
 # Validate configuration
 vector validate /etc/vector/vector.toml
@@ -238,13 +233,6 @@ tail -f /var/log/vector/vector.log
 tail -f /var/log/vector/vector.err
 ```
 
-### Test DHCP event ingestion
-
-```bash
-# Send a test event to Vector
-echo '{"ip_version":"v4","test":true}' | nc localhost 9000
-```
-
 ### Validate Vector config
 
 ```bash
@@ -252,13 +240,6 @@ CLICKHOUSE_URL="http://localhost:8123" \
 CLICKHOUSE_USER="default" \
 CLICKHOUSE_PASSWORD="test" \
 vector validate /etc/vector/vector.toml
-```
-
-### Verify capabilities
-
-```bash
-getcap /usr/local/bin/shadowdhcp
-# Should show: /usr/local/bin/shadowdhcp cap_net_bind_service=ep
 ```
 
 ### Check user/group membership

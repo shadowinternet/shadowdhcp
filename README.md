@@ -4,150 +4,72 @@ A reservation-only DHCPv4 and DHCPv6 server designed for internet service provid
 
 > **Beta Software** - This project is under active development. APIs and configuration formats may change.
 
-## Current Limitations
-
-* No high availability or clustering
-* Single-threaded per protocol for simplicity. All logic is already thread safe, modify main.rs thread spawning to make the server multi-threaded or async
-* Lease times are currently hardcoded
-* No duplicate reservation checking
-* Does not persist MAC to Option82 bindings to disk
-
-For a mature, full-featured DHCP server, use the [Kea DHCP server](https://www.isc.org/kea/).
-
 ## Features
 
-* Reservation only, external software generates the reservations. E.g., ISP billing system
-* In memory only, no database backend
-* Simple configuration with ids.json, config.json, and reservations.json
-* Only responds to relayed or unicast requests
-* IPv6 IA_NA and IA_PD are required for each reservation
-* Reload reservations from disk on SIGHUP
-* Management tcp socket to update reservations from another program
-* Send metrics to [vector](https://vector.dev) which can then be forwarded to Clickhouse or other databases. See `vector.toml`, `clickhouse_schema.sql` and `openrc` folder
-* Runs on Linux (glibc, or musl) and Windows. Alpine Linux packages will be made available through a hosted [repo](https://github.com/shadowinternet/aports)
-* Supports dynamic IPv4 Option82 to IPv6 mappings. When a client receives an IPv4 address via Option82, the server remembers their MAC address and can use the MAC to deliver IPv6 address information
+* Reservation only, external software generates the reservations (e.g., ISP billing system)
+* In-memory only, no database backend
+* Simple configuration with `ids.json`, `config.json`, and `reservations.json`
+* Only responds to relayed requests
+* Correlates DHCPv6 with DHCPv4 Option 82 reservations. When premises equipment doesn't support DHCPv6 Option 37, the server uses MAC addresses learned from DHCPv4 sessions to match IPv6 requests
+* Reload reservations from disk on SIGHUP or via management socket
+* Analytics events for monitoring and troubleshooting
+* Runs on Linux (glibc or musl), macOS, and Windows
 
-## Extractors
+## Quick start
 
-Run `shadowdhcp --available-extractors` to see all available extractors.
+See [Installation on Alpine Linux](docs/installation-alpine.md) for a complete guide.
 
-### Option82 extractors (DHCPv4)
+## Configuration
 
-Multiple extractors are defined and can be enabled in the config file to try and parse Option82 data from the circuit, remote, and subscriber fields.
-
-### Option18/37 extractors (DHCPv6)
-
-Extractors for DHCPv6 interface-id (Option 18) and remote-id (Option 37) fields.
-
-### MAC extractors (DHCPv6)
-
-MAC extractors control how client MAC addresses are extracted from DHCPv6 relay messages. Each configured extractor is tried in order until one produces a MAC that matches a reservation.
-
-| Extractor | Source | Reliability | Notes |
-|-----------|--------|-------------|-------|
-| `client_linklayer_address` | RFC 6939 Option 79 | High | Added by first-hop relay agent |
-| `peer_addr_eui64` | Relay peer_addr | Medium | Only works with EUI-64 link-local addresses |
-| `duid` | Client DUID (types 1 & 3) | Low | RFC 8415 warns MAC may be stale |
-
-Default: `["client_linklayer_address"]` if not specified.
-
-
-## Example config:
+`config.json`:
 
 ```json
 {
-    "dns_v4": [
-        "8.8.8.8",
-        "8.8.4.4"
-    ],
+    "dns_v4": ["8.8.8.8", "8.8.4.4"],
     "subnets_v4": [
         {
-            "net": "100.100.1.0/24",
-            "gateway": "100.100.1.1"
-        },
-        {
-            "net": "100.100.2.0/24",
-            "gateway": "100.100.3.1"
+            "net": "100.64.0.0/24",
+            "gateway": "100.64.0.1"
         }
     ],
-    "option82_extractors": [
-        "remote_only",
-        "subscriber_only",
-        "circuit_and_remote",
-        "remote_first_12"
-    ],
-    "option1837_extractors": [
-        "interface_only",
-        "remote_only",
-        "interface_and_remote"
-    ],
-    "mac_extractors": [
-        "client_linklayer_address",
-        "peer_addr_eui64"
-    ]
+    "option82_extractors": ["remote_only", "normalize_remote_mac"],
+    "option1837_extractors": ["remote_only"]
 }
 ```
 
-Optional fields:
-- `option82_extractors`: List of DHCPv4 Option82 extractor functions
-- `option1837_extractors`: List of DHCPv6 Option18/37 extractor functions
-- `mac_extractors`: List of DHCPv6 MAC extraction methods (default: `["client_linklayer_address"]`)
-- `events_address`: Address:port for analytics events (JSON over TCP) (e.g., 127.0.0.1:9000)
-- `mgmt_address`: Address:port for management interface (e.g., 127.0.0.1:8547)
-- `log_level`: One of [trace, debug, info, warn, error] (default: info)
-- `v4_bind_address`: Address:port for DHCPv4 (default: 0.0.0.0:67)
-- `v6_bind_address`: Address:port for DHCPv6 (default: [::]:547)
-
-## Example reservations
-
-Reservations must contain:
- * ipv4
- * ipv6_na
- * ipv6_pd
- * At least one source for IPv4 and IPv6. Some sources can be used for both
-   * mac - can be used for both
-   * option82 - can be used for both. Should be formatted in all caps dash format: AA-BB-CC-DD-EE-FF
-   * duid - IPv6 only
-
-Reservations with multiple sources will be evaluated in the following order:
-
-IPv4: mac -> option82
-
-IPv6: duid -> option 18 / option 37 -> mac -> option82
-
 `reservations.json`:
+
 ```json
 [
     {
-        "ipv4": "192.168.1.109",
-        "ipv6_na": "2001:db8:1:2::1",
-        "ipv6_pd": "2001:db8:1:3::/56",
+        "ipv4": "100.64.0.100",
+        "ipv6_na": "2001:db8:1::100",
+        "ipv6_pd": "2001:db8:100::/56",
         "mac": "00-11-22-33-44-55"
     },
     {
-        "ipv4": "192.168.1.110",
-        "ipv6_na": "2001:db8:1:4::1",
-        "ipv6_pd": "2001:db8:1:5::/56",
-        "mac": "00-11-22-33-44-57"
-    },
-    {
-        "ipv4": "192.168.1.111",
-        "ipv6_na": "2001:db8:1:6::1",
-        "ipv6_pd": "2001:db8:1:7::/56",
-        "option82": {"circuit": "99-11-22-33-44-55", "remote": "eth2:100"}
-    },
-    {
-        "ipv4": "192.168.1.112",
-        "ipv6_na": "2001:db8:1:8::1",
-        "ipv6_pd": "2001:db8:1:9::/56",
-        "duid": "29:30:31:32:33:34:35:36:37:38:39:40:41:42:43:44",
-        "option82": {"subscriber": "subscriber:1020"}
-    },
-    {
-        "ipv4": "100.110.1.2",
-        "ipv6_na": "2001:db8:1::1",
-        "ipv6_pd": "2001:db8:2::/56",
-        "option82": {"remote": "AC-8B-A9-E2-17-F8"}
+        "ipv4": "100.64.0.101",
+        "ipv6_na": "2001:db8:1::101",
+        "ipv6_pd": "2001:db8:101::/56",
+        "option82": {"remote": "AA-BB-CC-DD-EE-FF"}
     }
 ]
 ```
+
+## Documentation
+
+* [Installation on Alpine Linux](docs/installation-alpine.md) - Complete installation guide
+* [Configuration](docs/configuration.md) - All configuration options
+* [Reservations](docs/reservations.md) - Reservation format and extractors
+* [Management](docs/management.md) - TCP management interface
+* [Events](docs/events.md) - Analytics events and ClickHouse setup
+
+## Current limitations
+
+* No high availability
+* Single-threaded per protocol
+* Lease times are hardcoded
+* No duplicate reservation checking
+* Leases and MAC to Option 82 bindings aren't persisted to disk
+
+For a mature, full-featured DHCP server, consider the [Kea DHCP server](https://www.isc.org/kea/).
