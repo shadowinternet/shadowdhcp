@@ -56,6 +56,9 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             suffix: windows
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            suffix: macos-aarch64
 
     runs-on: ${{ matrix.os }}
 
