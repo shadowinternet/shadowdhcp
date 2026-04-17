@@ -1,9 +1,9 @@
 # Vector configuration for shadowdhcp analytics and traces
 # Receives DHCP events via TCP and traces via exec, sends to ClickHouse
 #
-# Required environment variables:
-#   CLICKHOUSE_URL      - ClickHouse HTTP endpoint (e.g., "http://clickhouse.example.com:8123")
-#   CLICKHOUSE_USER     - ClickHouse username (e.g., "default")
+# Required environment variables
+#   CLICKHOUSE_URL      - ClickHouse HTTPS endpoint (e.g., "https://clickhouse.example.com")
+#   CLICKHOUSE_USER     - ClickHouse username (e.g., "dhcp_writer")
 #   CLICKHOUSE_PASSWORD - ClickHouse password
 
 # =============================================================================
@@ -22,7 +22,6 @@ decoding.codec = "json"
 type = "file"
 include = ["/var/log/shadowdhcp/shadowdhcp.log"]
 read_from = "end"
-decoding.codec = "json"
 ignore_checkpoints = true
 
 # =============================================================================
@@ -73,9 +72,11 @@ del(.ip_version)
 type = "remap"
 inputs = ["traces"]
 source = '''
-# Map tracing-subscriber JSON to OTLP log format
+# Map tracing-subscriber JSON to OTLP log format.
+# Input from the file source is a raw line in .message; parse it first.
 # Input format from tracing-subscriber json():
 # {"timestamp":"2024-01-01T00:00:00.000000Z","level":"INFO","target":"shadowdhcp::v6","fields":{"message":"..."},...}
+. = parse_json!(.message)
 
 # Parse timestamp to unix nanoseconds
 .TimestampTime = .timestamp

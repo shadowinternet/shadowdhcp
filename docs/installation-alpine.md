@@ -19,8 +19,7 @@ The firewall should allow port 67 and port 547 from the DHCP relays to Alpine.
 
 ```bash
 # Install Shadow Internet public key
-wget -O /etc/apk/keys/shadowinternet.rsa.pub \
-    https://apk.shadowinter.net/keys/shadowinternet.rsa.pub
+wget -O /etc/apk/keys/shadowinternet.rsa.pub https://apk.shadowinter.net/keys/shadowinternet.rsa.pub
 
 # Add repository
 echo "https://apk.shadowinter.net/stable" >> /etc/apk/repositories

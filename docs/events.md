@@ -189,6 +189,9 @@ Run the schema file on your ClickHouse server to create the required tables:
 
 ```bash
 clickhouse-client --password --multiquery < clickhouse_schema.sql
+
+# or if letencrypt enabled:
+clickhouse-client --host clickhouse.example.com --user admin --password --port 9440 --secure --multiquery < clickhouse_schema.sql
 ```
 
 This creates:
@@ -196,101 +199,21 @@ This creates:
 - `dhcp.events_v6` - DHCPv6 events table
 - Materialized views for common aggregations (frequent clients, relay statistics)
 
+Read the comment in `clickhouse_schema.sql` for details on creating a user that only has permission to write to the DHCP event tables.
+
 ### 3. Configure Vector
 
-Copy the example configuration to `/etc/vector/vector.toml`:
-
-```toml
-# Sources - receive events from shadowdhcp
-[sources.dhcp_events]
-type = "socket"
-address = "127.0.0.1:9000"
-mode = "tcp"
-decoding.codec = "json"
-
-# Route events by IP version
-[transforms.route_by_version]
-type = "route"
-inputs = ["dhcp_events"]
-
-[transforms.route_by_version.route]
-v4 = '.ip_version == "v4"'
-v6 = '.ip_version == "v6"'
-
-# Transform v4 events
-[transforms.prepare_v4]
-type = "remap"
-inputs = ["route_by_version.v4"]
-source = '''
-.host_name = get_hostname!()
-.success = if bool!(.success) { 1 } else { 0 }
-del(.ip_version)
-'''
-
-# Transform v6 events
-[transforms.prepare_v6]
-type = "remap"
-inputs = ["route_by_version.v6"]
-source = '''
-.host_name = get_hostname!()
-.success = if bool!(.success) { 1 } else { 0 }
-del(.ip_version)
-'''
-
-# Send to ClickHouse
-[sinks.clickhouse_v4]
-type = "clickhouse"
-inputs = ["prepare_v4"]
-endpoint = "${CLICKHOUSE_URL}"
-database = "dhcp"
-table = "events_v4"
-skip_unknown_fields = true
-
-auth.strategy = "basic"
-auth.user = "${CLICKHOUSE_USER}"
-auth.password = "${CLICKHOUSE_PASSWORD}"
-
-batch.max_bytes = 10485760
-batch.timeout_secs = 1
-
-buffer.type = "disk"
-buffer.max_size = 268435488
-buffer.when_full = "block"
-
-[sinks.clickhouse_v6]
-type = "clickhouse"
-inputs = ["prepare_v6"]
-endpoint = "${CLICKHOUSE_URL}"
-database = "dhcp"
-table = "events_v6"
-skip_unknown_fields = true
-
-auth.strategy = "basic"
-auth.user = "${CLICKHOUSE_USER}"
-auth.password = "${CLICKHOUSE_PASSWORD}"
-
-batch.max_bytes = 10485760
-batch.timeout_secs = 1
-
-buffer.type = "disk"
-buffer.max_size = 268435488
-buffer.when_full = "block"
-
-# Drop unmatched events
-[sinks.drop_unmatched]
-type = "blackhole"
-inputs = ["route_by_version._unmatched"]
-print_interval_secs = 0
-```
+Modify `/etc/vector/vector.toml` to contain the contents of [`vector.toml`](../vector.toml) at the repo root.
 
 ### 4. Configure environment variables
 
-Create `/etc/conf.d/vector` with your ClickHouse credentials:
+Create `/etc/conf.d/vector` with your ClickHouse credentials. Vector uses the http(s) api.
 
 ```bash
-CLICKHOUSE_URL="http://clickhouse.example.com:8123"
-CLICKHOUSE_USER="default"
-CLICKHOUSE_PASSWORD="changeme"
+# /etc/conf.d/vector
+export CLICKHOUSE_URL="https://clickhouse.example.com"
+export CLICKHOUSE_USER="dhcp_writer"
+export CLICKHOUSE_PASSWORD="changeme"
 ```
 
 ### 5. Start Vector

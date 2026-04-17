@@ -1,5 +1,39 @@
 -- ClickHouse schema for shadowdhcp analytics
--- Run with: clickhouse-client --password --multiquery < clickhouse_schema.sql
+-- Run with (as your admin user, from a machine in the admin allowlist):
+--   clickhouse-client --host <server> --port 9440 --secure \
+--                     --user admin --password --multiquery < clickhouse_schema.sql
+
+-- =============================================================================
+-- Creating a restricted 'dhcp_writer' user
+-- =============================================================================
+-- The DHCP server(s) only need to INSERT rows into the source tables; the
+-- materialized views below are populated automatically by ClickHouse, so they
+-- do NOT need their own grants. The snippet below creates a user that:
+--   * authenticates with a password (bcrypt-hashed on disk)
+--   * can INSERT into any table in the dhcp.* database
+--   * CANNOT SELECT, ALTER, DROP, or access any other database
+--   * can only connect from the IP ranges you list
+--
+-- Connect as an admin user (one with access_management = 1) and run:
+--
+--   CREATE USER dhcp_writer
+--       IDENTIFIED WITH bcrypt_password BY 'REPLACE_WITH_STRONG_PASSWORD'
+--       HOST IP '2001:db8:abcd::/48',   -- v6 subnet your DHCP servers live on
+--            IP '10.20.30.0/24';        -- v4 subnet (optional; list as many as needed)
+--
+--   GRANT INSERT ON dhcp.* TO dhcp_writer;
+--
+-- Useful follow-ups:
+--   SHOW GRANTS FOR dhcp_writer;
+--   ALTER USER dhcp_writer IDENTIFIED WITH bcrypt_password BY 'new-password';
+--   ALTER USER dhcp_writer HOST IP '2001:db8:abcd::/48', IP '10.20.30.0/24';
+--   DROP USER dhcp_writer;
+--
+-- Connect test from a DHCP server inside the allowlist:
+--   clickhouse-client --host <server> --port 9440 --secure \
+--                     --user dhcp_writer --password \
+--                     --query "INSERT INTO dhcp.events_v4 (timestamp_ms, success) VALUES (toUnixTimestamp64Milli(now64(3)), 1)"
+-- =============================================================================
 
 CREATE DATABASE IF NOT EXISTS dhcp;
 
