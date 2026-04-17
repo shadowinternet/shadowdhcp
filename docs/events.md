@@ -216,7 +216,15 @@ export CLICKHOUSE_USER="dhcp_writer"
 export CLICKHOUSE_PASSWORD="changeme"
 ```
 
-### 5. Start Vector
+### 5. Grant Vector access to the log file
+
+The shadowdhcp log directory is `shadowdhcp:shadowdhcp` mode 0750, so Vector can't read it by default. Add the `vector` user to the `shadowdhcp` group:
+
+```bash
+addgroup vector shadowdhcp
+```
+
+### 6. Start Vector
 
 ```bash
 service vector start
