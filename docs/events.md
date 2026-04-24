@@ -1,15 +1,31 @@
 # Events
 
-shadowdhcp can emit JSON events for every DHCP request, enabling analytics, monitoring, and troubleshooting. Events are sent over TCP to a configurable address and can be collected by tools like Vector for storage in ClickHouse.
+shadowdhcp can emit JSON events for every DHCP request, enabling analytics, monitoring, and troubleshooting. Two sinks are supported and can be enabled independently:
+
+- **ClickHouse**: events are batched and inserted over HTTPS directly to Clickhouse.
+- **TCP JSON lines**: events are written to a TCP socket so an external collector can consume them.
 
 ## Enabling events
 
-Set the `events_address` field in `config.json` to enable event emission:
+Event sinks are enabled by their presence in `config.json`:
 
 ```json
 {
+    "clickhouse": {
+        "url": "https://clickhouse.example.com",
+        "user": "dhcp_writer",
+        "password": "changeme"
+    },
     "events_address": "127.0.0.1:9000"
 }
+```
+
+If both are set, every event is delivered to both sinks. A stuck or unreachable sink cannot back-pressure the other.
+
+The ClickHouse writer is gated behind the `clickhouse` cargo feature (enabled by default). To build a minimal binary without it:
+
+```bash
+cargo build --release --no-default-features
 ```
 
 ## Event structure
@@ -163,27 +179,17 @@ No reservation found:
 
 ## Event delivery
 
-Events are batched and sent over TCP as newline-delimited JSON. The writer:
+Both writers share the same batching strategy:
 
-- Batches up to 256 events or 3 seconds of latency before sending
-- Reconnects automatically if the connection is lost
-- Drops events if the connection cannot be established (to prevent memory exhaustion)
+- Batch up to 256 events or 3 seconds of latency before flushing
+- On failure, sleep for 3 seconds and retry; events arriving during the retry window are dropped to prevent unbounded memory growth
+- A warning is logged with the count of dropped events when the sink recovers
 
-When events are dropped due to connection failures, a warning is logged with the count of dropped events.
+The TCP writer sends newline-delimited JSON and reconnects automatically if the peer drops.
 
-## Setting up Vector with ClickHouse
+## Setting up the ClickHouse writer
 
-[Vector](https://vector.dev) is a lightweight observability pipeline that can receive events from shadowdhcp and forward them to ClickHouse.
-
-### 1. Install Vector
-
-On Alpine Linux using the Shadow Internet repository:
-
-```bash
-apk add vector-bin
-```
-
-### 2. Create ClickHouse schema
+### 1. Create ClickHouse schema
 
 Run the schema file on your ClickHouse server to create the required tables:
 
@@ -201,35 +207,43 @@ This creates:
 
 Read the comment in `clickhouse_schema.sql` for details on creating a user that only has permission to write to the DHCP event tables.
 
-### 3. Configure Vector
+### 2. Add the clickhouse block to config.json
 
-Modify `/etc/vector/vector.toml` to contain the contents of [`vector.toml`](../vector.toml) at the repo root.
-
-### 4. Configure environment variables
-
-Create `/etc/conf.d/vector` with your ClickHouse credentials. Vector uses the http(s) api.
-
-```bash
-# /etc/conf.d/vector
-export CLICKHOUSE_URL="https://clickhouse.example.com"
-export CLICKHOUSE_USER="dhcp_writer"
-export CLICKHOUSE_PASSWORD="changeme"
+```json
+{
+    "clickhouse": {
+        "url": "https://clickhouse.example.com",
+        "user": "dhcp_writer",
+        "password": "REPLACE_WITH_STRONG_PASSWORD",
+        "database": "dhcp",
+        "hostname": "dhcp-sea-01"
+    }
+}
 ```
 
-### 5. Grant Vector access to the log file
+Required:
+- `url`: HTTPS endpoint of the ClickHouse HTTP interface.
+- `user`, `password`: credentials for the writer account created in the schema file.
 
-The shadowdhcp log directory is `shadowdhcp:shadowdhcp` mode 0750, so Vector can't read it by default. Add the `vector` user to the `shadowdhcp` group:
+Optional:
+- `database`: target database, defaults to `"dhcp"`.
+- `hostname`: value written into the `host_name` column of each row. If omitted, shadowdhcp reads `/etc/hostname` at startup. Set this when you want a logical name (e.g. `"dhcp-sea-01"`) that differs from the OS hostname.
 
-```bash
-addgroup vector shadowdhcp
+### 3. Restart shadowdhcp
+
+On OpenRC: `rc-service shadowdhcp restart`.
+
+## Setting up an external collector (TCP writer)
+
+For users who want to fan events into their own pipeline, set `events_address` in `config.json`:
+
+```json
+{
+    "events_address": "127.0.0.1:9000"
+}
 ```
 
-### 6. Start Vector
-
-```bash
-service vector start
-rc-update add vector default
-```
+shadowdhcp connects outbound to `events_address` as a TCP client, so the collector must be listening on that address. A minimal collector is a `nc -lk 9000` for debugging; production collectors would batch and forward to their own store.
 
 ## Example queries
 

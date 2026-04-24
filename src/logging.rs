@@ -19,7 +19,7 @@ pub fn init_stdout(max_level: Level) {
             )
             .init();
     } else {
-        // JSON output for machine consumption (Vector, etc.)
+        // JSON output for machine consumption
         tracing_subscriber::registry()
             .with(
                 fmt::layer()

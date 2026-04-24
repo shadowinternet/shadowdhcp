@@ -3,7 +3,7 @@ use dhcproto::{v4, Decodable, Encodable};
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
-    sync::{mpsc, Arc},
+    sync::Arc,
     time::Duration,
 };
 use tracing::{debug, error, info, trace};
@@ -13,7 +13,10 @@ use crate::leasedb::LeaseDb;
 use crate::reservationdb::ReservationDb;
 
 use crate::{
-    analytics::events::{DhcpEvent, DhcpEventV4},
+    analytics::{
+        events::{DhcpEvent, DhcpEventV4},
+        EventSenders,
+    },
     v4::handlers::{handle_message, DhcpV4Response},
 };
 
@@ -22,7 +25,7 @@ pub fn v4_worker(
     reservations: Arc<ArcSwap<ReservationDb>>,
     leases: Arc<LeaseDb>,
     config: Arc<ArcSwap<Config>>,
-    event_channel: Option<mpsc::Sender<DhcpEvent>>,
+    event_channel: Option<EventSenders>,
 ) {
     let mut read_buf = [0u8; 2048];
     let mut error_count: u32 = 0;
@@ -63,13 +66,13 @@ pub fn v4_worker(
             Ok(msg) => match handle_message(&reservations.load(), &leases, &config.load(), &msg) {
                 DhcpV4Response::NoResponse(reason) => {
                     debug!("Not responding {:?}", reason);
-                    if let Some(ref event_sender) = event_channel {
+                    if let Some(ref sinks) = event_channel {
                         let relay_addr = match src {
                             SocketAddr::V4(v4) => *v4.ip(),
                             SocketAddr::V6(_) => continue,
                         };
                         let event = DhcpEventV4::failed(&msg, relay_addr, reason.as_str());
-                        let _ = event_sender.send(DhcpEvent::V4(event));
+                        sinks.send(DhcpEvent::V4(event));
                     }
                 }
                 DhcpV4Response::Message(resp) => {
@@ -83,7 +86,7 @@ pub fn v4_worker(
                     match socket.send_to(&write_buf, src) {
                         Ok(sent) => {
                             debug!("responded to {src} with {sent} bytes");
-                            if let Some(ref event_sender) = event_channel {
+                            if let Some(ref sinks) = event_channel {
                                 let relay_addr = match src {
                                     SocketAddr::V4(v4) => *v4.ip(),
                                     SocketAddr::V6(_) => continue,
@@ -94,7 +97,7 @@ pub fn v4_worker(
                                     resp.reservation.as_deref(),
                                     resp.reservation_match,
                                 );
-                                let _ = event_sender.send(DhcpEvent::V4(event));
+                                sinks.send(DhcpEvent::V4(event));
                             }
                         }
                         Err(e) => error!("Problem sending response message: {e}"),

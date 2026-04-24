@@ -27,9 +27,14 @@ lto = true
 codegen-units = 1
 panic = "abort"
 
+[features]
+default = ["clickhouse"]
+clickhouse = ["dep:ureq", "dep:base64"]
+
 [dependencies]
 advmac = { version = "1.0.3", default-features = false, features = ["serde", "std"] }
 arc-swap = "1.7.1"
+base64 = { version = "0.22", default-features = false, features = ["std"], optional = true }
 compact_str = { version = "0.9.0", features = ["serde"] }
 dashmap = "6.1.0"
 dhcproto = { git = "https://github.com/nocduro/dhcproto.git" }
@@ -39,5 +44,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["fmt", "std", "json"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier", "json"], optional = true }
+
 [target.'cfg(unix)'.dependencies]
 signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }

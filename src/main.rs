@@ -11,6 +11,7 @@ use arc_swap::ArcSwap;
 use shadowdhcp::{logging, Reservation};
 
 use crate::analytics::events::DhcpEvent;
+use crate::analytics::EventSenders;
 use crate::config::Config;
 use crate::leasedb::LeaseDb;
 use crate::reservationdb::ReservationDb;
@@ -115,12 +116,27 @@ fn main() {
     let loaded_config = config.load();
     let events_address = loaded_config.events_address;
     let mgmt_address = loaded_config.mgmt_address;
+    #[cfg(feature = "clickhouse")]
+    let clickhouse_config = loaded_config.clickhouse.clone();
     drop(loaded_config);
 
-    let (tx, rx) = events_address
-        .as_ref()
-        .map(|_| mpsc::channel::<DhcpEvent>())
-        .unzip();
+    let mut senders = EventSenders::new();
+    let tcp_rx: Option<mpsc::Receiver<DhcpEvent>> = events_address.map(|_| {
+        let (tx, rx) = mpsc::channel::<DhcpEvent>();
+        senders.push(tx);
+        rx
+    });
+    #[cfg(feature = "clickhouse")]
+    let clickhouse_rx: Option<mpsc::Receiver<DhcpEvent>> = clickhouse_config.as_ref().map(|_| {
+        let (tx, rx) = mpsc::channel::<DhcpEvent>();
+        senders.push(tx);
+        rx
+    });
+    let senders = if senders.is_empty() {
+        None
+    } else {
+        Some(senders)
+    };
 
     // Bind sockets before spawning threads - fail fast if any fails
     let v4_socket = bind_udp_socket(config.load().v4_bind_address, "DHCPv4");
@@ -142,29 +158,37 @@ fn main() {
             Duration::from_hours(24),
             db.clone(),
         );
-        let (v4db, v4leases, v4config, v4tx) =
-            (db.clone(), leases.clone(), config.clone(), tx.clone());
+        let (v4db, v4leases, v4config, v4sinks) =
+            (db.clone(), leases.clone(), config.clone(), senders.clone());
         let v4worker = thread::Builder::new()
             .name("v4worker".to_string())
             .spawn_scoped(s, move || {
-                v4::v4_worker(v4_socket, v4db, v4leases, v4config, v4tx)
+                v4::v4_worker(v4_socket, v4db, v4leases, v4config, v4sinks)
             })
             .expect("v4worker spawn");
 
-        let (v6db, v6leases, v6config, v6tx) =
-            (db.clone(), leases.clone(), config.clone(), tx.clone());
+        let (v6db, v6leases, v6config, v6sinks) =
+            (db.clone(), leases.clone(), config.clone(), senders.clone());
         let v6worker = thread::Builder::new()
             .name("v6worker".to_string())
             .spawn_scoped(s, move || {
-                v6::v6_worker(v6_socket, v6db, v6leases, v6config, v6tx)
+                v6::v6_worker(v6_socket, v6db, v6leases, v6config, v6sinks)
             })
             .expect("v6worker spawn");
 
-        let events_worker = events_address.zip(rx).map(|(addr, rx)| {
+        let tcp_events_worker = events_address.zip(tcp_rx).map(|(addr, rx)| {
             thread::Builder::new()
-                .name("events".to_string())
+                .name("events-tcp".to_string())
                 .spawn_scoped(s, move || analytics::writer::tcp_writer(addr, rx))
-                .expect("events spawn")
+                .expect("events-tcp spawn")
+        });
+
+        #[cfg(feature = "clickhouse")]
+        let clickhouse_worker = clickhouse_config.zip(clickhouse_rx).map(|(cfg, rx)| {
+            thread::Builder::new()
+                .name("events-ch".to_string())
+                .spawn_scoped(s, move || analytics::clickhouse::clickhouse_writer(cfg, rx))
+                .expect("events-ch spawn")
         });
 
         // Spawn management interface listener if configured
@@ -182,8 +206,12 @@ fn main() {
         v4worker.join().expect("v4worker join");
         v6worker.join().expect("v6worker join");
         leasedb_cleanup_worker.join().expect("leasedb cleanup join");
-        if let Some(handle) = events_worker {
-            handle.join().expect("events join");
+        if let Some(handle) = tcp_events_worker {
+            handle.join().expect("events-tcp join");
+        }
+        #[cfg(feature = "clickhouse")]
+        if let Some(handle) = clickhouse_worker {
+            handle.join().expect("events-ch join");
         }
         if let Some(handle) = mgmt_worker {
             handle.join().expect("mgmt join");
@@ -261,6 +289,11 @@ config.json:
         "client_linklayer_address"
     ],
     "events_address": "127.0.0.1:9000",
+    "clickhouse": {
+        "url": "https://clickhouse.example.com",
+        "user": "dhcp_writer",
+        "password": "changeme"
+    },
     "mgmt_address": "127.0.0.1:8547"
 }
 
@@ -269,6 +302,11 @@ Optional fields:
   - option1837_extractors: List of DHCPv6 Option18/37 extractor functions
   - mac_extractors: List of DHCPv6 MAC extraction methods (default: ["client_linklayer_address"])
   - events_address: Address:port for analytics events (JSON over TCP)
+  - clickhouse: Direct ClickHouse writer (HTTPS). Required: url, user, password.
+                Optional: database (default "dhcp"), hostname (default: read from /etc/hostname).
+                Enabled by the "clickhouse" cargo feature (on by default). Sinks events into
+                <database>.events_v4 and <database>.events_v6 via JSONEachRow. Runs alongside
+                events_address if both are set.
   - mgmt_address: Address:port for management interface (reload/replace reservations)
   - log_level: One of [trace, debug, info, warn, error] (default: info)
   - v4_bind_address: Address:port for DHCPv4 (default: 0.0.0.0:67)

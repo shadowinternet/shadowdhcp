@@ -12,13 +12,16 @@ use std::{
     fmt::Write,
     io,
     net::{SocketAddr, UdpSocket},
-    sync::{mpsc, Arc},
+    sync::Arc,
     time::Duration,
 };
 use tracing::{debug, error, trace};
 
 use crate::{
-    analytics::events::{DhcpEvent, DhcpEventV6},
+    analytics::{
+        events::{DhcpEvent, DhcpEventV6},
+        EventSenders,
+    },
     v6::handlers::DhcpV6Response,
 };
 
@@ -27,7 +30,7 @@ pub fn v6_worker(
     reservations: Arc<ArcSwap<ReservationDb>>,
     leases: Arc<LeaseDb>,
     config: Arc<ArcSwap<Config>>,
-    event_channel: Option<mpsc::Sender<DhcpEvent>>,
+    event_channel: Option<EventSenders>,
 ) {
     let mut read_buf = [0u8; 2048];
     let mut error_count: u32 = 0;
@@ -89,14 +92,14 @@ pub fn v6_worker(
                 ) {
                     DhcpV6Response::NoResponse(reason) => {
                         debug!("Not responding {:?}", reason);
-                        if let Some(ref event_sender) = event_channel {
+                        if let Some(ref sinks) = event_channel {
                             let relay_addr = match src {
                                 SocketAddr::V6(v6) => *v6.ip(),
                                 SocketAddr::V4(_) => continue, // DHCPv6 requires IPv6
                             };
                             let event =
                                 DhcpEventV6::failed(inner_msg, &msg, relay_addr, reason.as_str());
-                            let _ = event_sender.send(DhcpEvent::V6(event));
+                            sinks.send(DhcpEvent::V6(event));
                         }
                     }
                     DhcpV6Response::Message(resp) => {
@@ -133,7 +136,7 @@ pub fn v6_worker(
                         match socket.send_to(&write_buf, src) {
                             Ok(sent) => {
                                 debug!("responded to {src} with {sent} bytes");
-                                if let Some(ref event_sender) = event_channel {
+                                if let Some(ref sinks) = event_channel {
                                     let relay_addr = match src {
                                         SocketAddr::V6(v6) => *v6.ip(),
                                         SocketAddr::V4(_) => continue, // DHCPv6 requires IPv6
@@ -145,7 +148,7 @@ pub fn v6_worker(
                                         resp.reservation.as_deref(),
                                         resp.reservation_match,
                                     );
-                                    let _ = event_sender.send(DhcpEvent::V6(event));
+                                    sinks.send(DhcpEvent::V6(event));
                                 }
                             }
                             Err(e) => error!("Problem sending response message: {e}"),

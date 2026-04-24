@@ -11,6 +11,29 @@ use crate::v6::extractors::{self as v6_extractors, NamedOption1837Extractor};
 use crate::v6::mac_extractors::MacExtractor;
 use shadowdhcp::{Duid, V4Subnet};
 
+/// ClickHouse writer configuration. Presence in `config.json` enables direct
+/// inserts to ClickHouse over HTTPS.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(not(feature = "clickhouse"), allow(dead_code))]
+pub struct ClickHouseConfig {
+    /// Base URL (e.g. "https://clickhouse.example.com" or "https://host:8443")
+    pub url: String,
+    pub user: String,
+    pub password: String,
+    /// Database name, defaults to "dhcp"
+    #[serde(default = "default_database")]
+    pub database: String,
+    /// Value to use for the `host_name` column in inserted rows. If unset,
+    /// reads from `/etc/hostname` at startup (empty string on platforms
+    /// without one).
+    #[serde(default)]
+    pub hostname: Option<String>,
+}
+
+fn default_database() -> String {
+    "dhcp".to_string()
+}
+
 /// Server wide configuration
 pub struct Config {
     pub v4_server_id: Ipv4Addr,
@@ -22,6 +45,8 @@ pub struct Config {
     pub mac_extractors: Vec<MacExtractor>,
     pub log_level: tracing::Level,
     pub events_address: Option<SocketAddr>,
+    #[cfg_attr(not(feature = "clickhouse"), allow(dead_code))]
+    pub clickhouse: Option<ClickHouseConfig>,
     pub mgmt_address: Option<SocketAddr>,
     pub v4_bind_address: SocketAddrV4,
     pub v6_bind_address: SocketAddrV6,
@@ -40,6 +65,7 @@ struct ServerConfig {
     mac_extractors: Option<Vec<MacExtractor>>,
     log_level: Option<String>,
     events_address: Option<SocketAddr>,
+    clickhouse: Option<ClickHouseConfig>,
     mgmt_address: Option<SocketAddr>,
     v4_bind_address: Option<SocketAddrV4>,
     v6_bind_address: Option<SocketAddrV6>,
@@ -147,6 +173,7 @@ impl Default for Config {
             mac_extractors: vec![MacExtractor::ClientLinklayerAddress],
             log_level: tracing::Level::INFO,
             events_address: None,
+            clickhouse: None,
             mgmt_address: None,
             v4_bind_address: "0.0.0.0:67".parse().unwrap(),
             v6_bind_address: "[::]:547".parse().unwrap(),
@@ -221,6 +248,7 @@ impl Config {
             mac_extractors,
             log_level,
             events_address: server_config.events_address,
+            clickhouse: server_config.clickhouse,
             mgmt_address: server_config.mgmt_address,
             v4_bind_address: server_config
                 .v4_bind_address

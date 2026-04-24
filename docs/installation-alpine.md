@@ -144,7 +144,7 @@ Check [Github](https://github.com/shadowinternet/shadowdhcp) for release notes o
 
 ## Recommended extras
 
-Install `logrotate` to prevent disk exhaustion from logs, and `vector` for sending events to a database like ClickHouse.
+Install `logrotate` to prevent disk exhaustion from logs.
 
 ### Logrotate
 
@@ -164,6 +164,6 @@ cat <<EOF > /etc/logrotate.d/shadowdhcp
 EOF
 ```
 
-### Vector
+### Event analytics
 
-See [events](events.md).
+shadowdhcp can insert DHCP events directly into ClickHouse. See [events](events.md) for setup.

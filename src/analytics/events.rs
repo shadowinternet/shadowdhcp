@@ -50,7 +50,7 @@ impl ReservationMatch {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(tag = "ip_version")]
 pub enum DhcpEvent {
     #[serde(rename = "v6")]
@@ -60,7 +60,7 @@ pub enum DhcpEvent {
 }
 
 /// DHCPv4 event for analytics - enables v4/v6 correlation via mac_address
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct DhcpEventV4 {
     pub timestamp_ms: u64,
     pub message_type: Option<&'static str>,
@@ -186,7 +186,7 @@ impl DhcpEventV4 {
 /// - IPv4 addresses → ClickHouse IPv4
 /// - MAC addresses → String (enables JOIN with v4 events)
 /// - Timestamps as u64 milliseconds → ClickHouse DateTime64(3)
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct DhcpEventV6 {
     pub timestamp_ms: u64,
     pub message_type: &'static str,
