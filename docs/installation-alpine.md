@@ -63,12 +63,19 @@ See [configuration](configuration.md) for details on all configuration options. 
 ```json
 {
   "dns_v4": ["8.8.8.8", "8.8.4.4"],
+  "dns_v6": ["2001:4860:4860::8888", "2001:4860:4860::8844"],
   "subnets_v4": [
     {
       "net": "100.100.1.0/24",
       "gateway": "100.100.1.1"
     }
-  ]
+  ],
+  "logging": {
+    "file": {
+      "path": "/var/log/shadowdhcp/shadowdhcp.log",
+      "max_files": 3
+    }
+  }
 }
 ```
 
@@ -142,27 +149,9 @@ Logs are stored at `/var/log/shadowdhcp/shadowdhcp.log`
 
 Check [Github](https://github.com/shadowinternet/shadowdhcp) for release notes or breaking changes, then run: `apk upgrade`
 
+Logs are rotated daily in-process; the default config keeps 3 files. To change the path or retention, edit the `logging.file` block in `/etc/shadowdhcp/config.json`. See [logging](logging.md) for the full sink list (stdout, rotating file, ClickHouse).
+
 ## Recommended extras
-
-Install `logrotate` to prevent disk exhaustion from logs.
-
-### Logrotate
-
-```
-apk add logrotate
-
-cat <<EOF > /etc/logrotate.d/shadowdhcp
-/var/log/shadowdhcp/shadowdhcp.log {
-    size 10M
-    rotate 3
-    compress
-    delaycompress
-    missingok
-    notifempty
-    copytruncate
-}
-EOF
-```
 
 ### Event analytics
 

@@ -1,5 +1,6 @@
 {
   "dns_v4": ["8.8.8.8", "8.8.4.4"],
+  "dns_v6": ["2001:4860:4860::8888", "2001:4860:4860::8844"],
   "subnets_v4": [
     {
       "net": "100.100.1.0/24",
@@ -21,5 +22,7 @@
     "circuit_and_remote",
     "remote_first_12"
   ],
-  "log_level": "debug"
+  "logging": {
+    "level": "debug"
+  }
 }

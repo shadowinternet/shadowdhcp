@@ -1,16 +1,23 @@
 use crate::analytics::events::DhcpEvent;
+use crate::batch::{run, BatchConfig, BatchSink};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::{
     fmt::Debug,
     io::{BufWriter, Write},
     net::{TcpStream, ToSocketAddrs},
-    time::{Duration, Instant},
+    time::Duration,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 const MAX_BATCH: usize = 256;
 const MAX_BATCH_LATENCY: Duration = Duration::from_secs(3);
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// Sized so that `MAX_RETRIES * RECONNECT_TIMEOUT` (~5–6 min with jitter)
+/// covers short downstream maintenance windows without dropping the
+/// in-flight batch.
+const MAX_RETRIES: u32 = 100;
 
 struct Writer {
     writer: BufWriter<TcpStream>,
@@ -38,83 +45,89 @@ impl Writer {
     }
 }
 
-pub fn tcp_writer<A: ToSocketAddrs + Debug>(address: A, rx: mpsc::Receiver<DhcpEvent>) {
-    let mut writer: Option<Writer> = None;
-    let mut batch: Vec<DhcpEvent> = Vec::with_capacity(MAX_BATCH);
-    let mut dropped: u64 = 0;
+struct TcpSink<A: ToSocketAddrs + Debug> {
+    address: A,
+    writer: Option<Writer>,
+    batch: Vec<DhcpEvent>,
+    dropped: Arc<AtomicU64>,
+}
 
-    info!("Starting analytics writer sending to {:?}", address);
-    loop {
-        // Block for the first event
-        let first = match rx.recv() {
-            Ok(ev) => ev,
+impl<A: ToSocketAddrs + Debug> BatchSink<DhcpEvent> for TcpSink<A> {
+    fn reset(&mut self) {
+        self.batch.clear();
+    }
+
+    fn push(&mut self, ev: DhcpEvent) {
+        self.batch.push(ev);
+    }
+
+    fn item_count(&self) -> usize {
+        self.batch.len()
+    }
+
+    fn flush(&mut self) -> Result<(), ()> {
+        if self.batch.is_empty() {
+            return Ok(());
+        }
+        if self.writer.is_none() {
+            match Writer::connect(&self.address) {
+                Ok(w) => self.writer = Some(w),
+                Err(_) => return Err(()),
+            }
+        }
+        let w = self.writer.as_mut().expect("writer present after connect");
+        match w.send_batch(&self.batch) {
+            Ok(()) => Ok(()),
             Err(_) => {
-                if let Some(mut w) = writer {
-                    let _ = w.writer.flush();
-                }
-                return;
-            }
-        };
-
-        batch.clear();
-        batch.push(first);
-
-        let batch_start = Instant::now();
-
-        // Fill batch until size or latency bound
-        while batch.len() < MAX_BATCH {
-            let elapsed = batch_start.elapsed();
-
-            if elapsed >= MAX_BATCH_LATENCY {
-                break;
-            }
-
-            let remaining = MAX_BATCH_LATENCY - elapsed;
-
-            match rx.recv_timeout(remaining) {
-                Ok(ev) => {
-                    if batch.len() < MAX_BATCH {
-                        batch.push(ev);
-                    } else {
-                        dropped += 1;
-                    }
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                self.writer = None;
+                Err(())
             }
         }
+    }
 
-        // Ensure connection and send
-        loop {
-            match writer {
-                None => match Writer::connect(&address) {
-                    Ok(w) => writer = Some(w),
-                    Err(_) => {
-                        // Drain pending events to prevent unbounded memory growth
-                        while rx.try_recv().is_ok() {
-                            dropped += 1;
-                        }
-                        std::thread::sleep(RECONNECT_TIMEOUT);
-                    }
-                },
-                Some(ref mut w) => match w.send_batch(&batch) {
-                    Ok(_) => break,
-                    Err(_) => {
-                        writer = None;
-                        // Drain pending events to prevent unbounded memory growth
-                        while rx.try_recv().is_ok() {
-                            dropped += 1;
-                        }
-                        std::thread::sleep(RECONNECT_TIMEOUT);
-                    }
-                },
-            }
-        }
+    fn on_start(&mut self) {
+        info!("Starting analytics writer sending to {:?}", self.address);
+    }
 
-        // Optional metrics
-        if dropped > 0 {
-            tracing::warn!("Dropped {} DHCP events", dropped);
-            dropped = 0;
+    fn on_cycle_complete(&mut self) {
+        let n = self.dropped.swap(0, Ordering::Relaxed);
+        if n > 0 {
+            warn!("Dropped {n} DHCP events at sender (channel full)");
         }
+    }
+
+    fn on_giveup(&mut self) {
+        if !self.batch.is_empty() {
+            warn!(
+                "TCP writer dropped batch of {} after exhausted retries",
+                self.batch.len()
+            );
+        }
+    }
+}
+
+pub fn tcp_writer<A: ToSocketAddrs + Debug>(
+    address: A,
+    rx: mpsc::Receiver<DhcpEvent>,
+    dropped: Arc<AtomicU64>,
+) {
+    let mut sink = TcpSink {
+        address,
+        writer: None,
+        batch: Vec::with_capacity(MAX_BATCH),
+        dropped,
+    };
+    run(
+        rx,
+        &mut sink,
+        BatchConfig {
+            max_batch: MAX_BATCH,
+            max_latency: MAX_BATCH_LATENCY,
+            retry_sleep: RECONNECT_TIMEOUT,
+            max_retries: MAX_RETRIES,
+        },
+    );
+    if let Some(mut w) = sink.writer {
+        let _ = w.writer.flush();
     }
 }

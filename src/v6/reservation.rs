@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use crate::types::{Duid, Reservation};
 use dhcproto::v6::{Message, RelayMessage};
-use shadowdhcp::{Duid, Reservation};
 use tracing::debug;
 
 use crate::analytics::events::ReservationMatch;
-use crate::leasedb::LeaseDb;
+use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
 
 use super::extensions::ShadowRelayMessageExtV6;
@@ -43,7 +43,7 @@ pub fn find_reservation_by_relay_info(
 /// Returns the reservation along with match metadata (method and extractor used).
 pub fn find_reservation(
     reservations: &ReservationDb,
-    leases: &LeaseDb,
+    leases: &Opt82Cache,
     opt1837_extractors: &[NamedOption1837Extractor],
     mac_extractors: &[MacExtractor],
     relay_msg: &RelayMessage,

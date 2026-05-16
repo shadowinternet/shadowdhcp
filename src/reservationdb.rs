@@ -3,7 +3,7 @@ use std::{hash::Hash, sync::Arc};
 use advmac::MacAddr6;
 use dashmap::DashMap;
 
-use shadowdhcp::{Duid, Option1837, Option82, Reservation};
+use crate::types::{Duid, Option1837, Option82, Reservation};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum ReservationKey {
@@ -116,7 +116,7 @@ mod tests {
         map.insert(ReservationKey::Opt82(opt82.clone()), "charlie");
 
         assert_eq!(
-            *map.get(&ReservationKey::Mac(mac.clone())).unwrap().value(),
+            *map.get(&ReservationKey::Mac(mac)).unwrap().value(),
             "alice"
         );
         assert_eq!(

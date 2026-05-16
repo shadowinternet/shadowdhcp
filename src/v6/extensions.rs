@@ -1,10 +1,10 @@
 use std::net::Ipv6Addr;
 
+use crate::types::Option1837;
 use advmac::MacAddr6;
 use compact_str::CompactString;
 use dhcproto::v6::{DhcpOption, Message, RelayMessage, IANA, IAPD};
 use ipnet::Ipv6Net;
-use shadowdhcp::Option1837;
 use tracing::debug;
 
 /// Helpers for interacting with dhcproto::v6::Message

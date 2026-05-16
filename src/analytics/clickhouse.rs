@@ -1,17 +1,23 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
+use std::net::Ipv6Addr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn};
 use ureq::Agent;
 
-use crate::analytics::events::DhcpEvent;
+use crate::analytics::events::{DhcpEvent, DhcpEventV6};
+use crate::batch::{run, BatchConfig, BatchSink};
+use crate::clickhouse_http::{basic_auth_header, build_agent, post, read_hostname, PostOutcome};
 use crate::config::ClickHouseConfig;
 
-const MAX_BATCH: usize = 256;
+const MAX_BATCH: usize = 2048;
 const MAX_BATCH_LATENCY: Duration = Duration::from_secs(3);
 const RETRY_SLEEP: Duration = Duration::from_secs(3);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Sized so that `MAX_RETRIES * RETRY_SLEEP` (~5–6 min with jitter) covers
+/// short ClickHouse maintenance windows without dropping the in-flight batch.
+const MAX_RETRIES: u32 = 100;
 
 /// Row shape sent to ClickHouse: event fields plus the server hostname.
 /// `ip_version` from the enum tag is intentionally dropped — the destination
@@ -23,197 +29,195 @@ struct HostRow<'a, T: Serialize> {
     inner: &'a T,
 }
 
-pub fn clickhouse_writer(cfg: ClickHouseConfig, rx: mpsc::Receiver<DhcpEvent>) {
-    let agent: Agent = Agent::config_builder()
-        .timeout_global(Some(REQUEST_TIMEOUT))
-        .build()
-        .into();
+/// V6 row wrapper that splits `Ipv6Net` PD fields into separate prefix/length
+/// columns to match the ClickHouse schema. The original `requested_ipv6_pd`
+/// and `reservation_ipv6_pd` fields still appear in the JSON via the flatten;
+/// ClickHouse drops them because the URL sets `input_format_skip_unknown_fields=1`.
+#[derive(Serialize)]
+struct V6Row<'a> {
+    host_name: &'a str,
+    requested_ipv6_pd_prefix: Option<Ipv6Addr>,
+    requested_ipv6_pd_length: Option<u8>,
+    reservation_ipv6_pd_prefix: Option<Ipv6Addr>,
+    reservation_ipv6_pd_length: Option<u8>,
+    #[serde(flatten)]
+    inner: &'a DhcpEventV6,
+}
 
-    let base = cfg.url.trim_end_matches('/');
-    let url_v4 = format!(
-        "{base}/?database={db}&query=INSERT+INTO+events_v4+FORMAT+JSONEachRow",
-        db = cfg.database,
-    );
-    let url_v6 = format!(
-        "{base}/?database={db}&query=INSERT+INTO+events_v6+FORMAT+JSONEachRow",
-        db = cfg.database,
-    );
-    let auth = basic_auth_header(&cfg.user, &cfg.password);
-    let host_name = cfg.hostname.unwrap_or_else(read_hostname);
+struct ChEventsSink {
+    agent: Agent,
+    base_url: String,
+    url_v4: String,
+    url_v6: String,
+    auth: String,
+    host_name: String,
+    body_v4: Vec<u8>,
+    body_v6: Vec<u8>,
+    count_v4: usize,
+    count_v6: usize,
+    dropped: Arc<AtomicU64>,
+}
 
-    info!("Starting ClickHouse writer -> {base} (host_name={host_name:?})");
+impl BatchSink<DhcpEvent> for ChEventsSink {
+    fn reset(&mut self) {
+        self.body_v4.clear();
+        self.body_v6.clear();
+        self.count_v4 = 0;
+        self.count_v6 = 0;
+    }
 
-    let mut body_v4: Vec<u8> = Vec::with_capacity(64 * 1024);
-    let mut body_v6: Vec<u8> = Vec::with_capacity(64 * 1024);
-    let mut count_v4: usize;
-    let mut count_v6: usize;
-    let mut dropped: u64 = 0;
-
-    loop {
-        let first = match rx.recv() {
-            Ok(ev) => ev,
-            Err(_) => return,
-        };
-
-        body_v4.clear();
-        body_v6.clear();
-        count_v4 = 0;
-        count_v6 = 0;
-        append_row(
-            &host_name,
-            &first,
-            &mut body_v4,
-            &mut body_v6,
-            &mut count_v4,
-            &mut count_v6,
-        );
-
-        let start = Instant::now();
-        while count_v4 + count_v6 < MAX_BATCH {
-            let elapsed = start.elapsed();
-            if elapsed >= MAX_BATCH_LATENCY {
-                break;
+    fn push(&mut self, event: DhcpEvent) {
+        match event {
+            DhcpEvent::V4(v4) => {
+                let row = HostRow {
+                    host_name: &self.host_name,
+                    inner: &v4,
+                };
+                if serde_json::to_writer(&mut self.body_v4, &row).is_ok() {
+                    self.body_v4.push(b'\n');
+                    self.count_v4 += 1;
+                }
             }
-            match rx.recv_timeout(MAX_BATCH_LATENCY - elapsed) {
-                Ok(ev) => append_row(
-                    &host_name,
-                    &ev,
-                    &mut body_v4,
-                    &mut body_v6,
-                    &mut count_v4,
-                    &mut count_v6,
-                ),
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    flush_with_retry(
-                        &agent,
-                        &url_v4,
-                        &auth,
-                        &body_v4,
-                        count_v4,
-                        &rx,
-                        &mut dropped,
-                    );
-                    flush_with_retry(
-                        &agent,
-                        &url_v6,
-                        &auth,
-                        &body_v6,
-                        count_v6,
-                        &rx,
-                        &mut dropped,
-                    );
-                    return;
+            DhcpEvent::V6(v6) => {
+                let row = V6Row {
+                    host_name: &self.host_name,
+                    requested_ipv6_pd_prefix: v6.requested_ipv6_pd.map(|n| n.network()),
+                    requested_ipv6_pd_length: v6.requested_ipv6_pd.map(|n| n.prefix_len()),
+                    reservation_ipv6_pd_prefix: v6.reservation_ipv6_pd.map(|n| n.network()),
+                    reservation_ipv6_pd_length: v6.reservation_ipv6_pd.map(|n| n.prefix_len()),
+                    inner: &v6,
+                };
+                if serde_json::to_writer(&mut self.body_v6, &row).is_ok() {
+                    self.body_v6.push(b'\n');
+                    self.count_v6 += 1;
                 }
             }
         }
+    }
 
-        flush_with_retry(
-            &agent,
-            &url_v4,
-            &auth,
-            &body_v4,
-            count_v4,
-            &rx,
-            &mut dropped,
+    fn item_count(&self) -> usize {
+        self.count_v4 + self.count_v6
+    }
+
+    /// POST v4 then v6.
+    ///
+    /// Per-sub-batch outcome:
+    /// * `Ok` — clear the buffer.
+    /// * `Permanent` (4xx other than 408/429) — drop the sub-batch with a warn
+    ///   so a single poisoned row can't wedge the writer forever. Don't
+    ///   propagate; the other sub-batch may still be transient.
+    /// * `Transient` (5xx, network, 408/429) — leave the sub-batch buffered so
+    ///   the runner retries it.
+    ///
+    /// Returns `Err` only if any sub-batch was transient.
+    fn flush(&mut self) -> Result<(), ()> {
+        let mut overall = Ok(());
+        if self.count_v4 > 0 {
+            match post(&self.agent, &self.url_v4, &self.auth, &self.body_v4) {
+                PostOutcome::Ok => {
+                    self.body_v4.clear();
+                    self.count_v4 = 0;
+                }
+                PostOutcome::Permanent(status) => {
+                    warn!(
+                        "ClickHouse v4 dropped batch of {} after permanent HTTP {status}",
+                        self.count_v4
+                    );
+                    self.body_v4.clear();
+                    self.count_v4 = 0;
+                }
+                PostOutcome::Transient(msg) => {
+                    warn!("ClickHouse v4 batch of {} retrying: {msg}", self.count_v4);
+                    overall = Err(());
+                }
+            }
+        }
+        if self.count_v6 > 0 {
+            match post(&self.agent, &self.url_v6, &self.auth, &self.body_v6) {
+                PostOutcome::Ok => {
+                    self.body_v6.clear();
+                    self.count_v6 = 0;
+                }
+                PostOutcome::Permanent(status) => {
+                    warn!(
+                        "ClickHouse v6 dropped batch of {} after permanent HTTP {status}",
+                        self.count_v6
+                    );
+                    self.body_v6.clear();
+                    self.count_v6 = 0;
+                }
+                PostOutcome::Transient(msg) => {
+                    warn!("ClickHouse v6 batch of {} retrying: {msg}", self.count_v6);
+                    overall = Err(());
+                }
+            }
+        }
+        overall
+    }
+
+    fn on_start(&mut self) {
+        info!(
+            "Starting ClickHouse writer -> {} (host_name={:?})",
+            self.base_url, self.host_name
         );
-        flush_with_retry(
-            &agent,
-            &url_v6,
-            &auth,
-            &body_v6,
-            count_v6,
-            &rx,
-            &mut dropped,
-        );
+    }
 
-        if dropped > 0 {
-            warn!("Dropped {dropped} DHCP events waiting for ClickHouse");
-            dropped = 0;
+    fn on_cycle_complete(&mut self) {
+        let n = self.dropped.swap(0, Ordering::Relaxed);
+        if n > 0 {
+            warn!("Dropped {n} DHCP events at sender (channel full)");
+        }
+    }
+
+    fn on_giveup(&mut self) {
+        let total = self.count_v4 + self.count_v6;
+        if total > 0 {
+            warn!("ClickHouse dropped batch of {total} after exhausted retries");
         }
     }
 }
 
-fn append_row(
-    host_name: &str,
-    event: &DhcpEvent,
-    body_v4: &mut Vec<u8>,
-    body_v6: &mut Vec<u8>,
-    count_v4: &mut usize,
-    count_v6: &mut usize,
+pub fn clickhouse_writer(
+    cfg: ClickHouseConfig,
+    rx: mpsc::Receiver<DhcpEvent>,
+    dropped: Arc<AtomicU64>,
 ) {
-    match event {
-        DhcpEvent::V4(v4) => {
-            let row = HostRow {
-                host_name,
-                inner: v4,
-            };
-            if serde_json::to_writer(&mut *body_v4, &row).is_ok() {
-                body_v4.push(b'\n');
-                *count_v4 += 1;
-            }
-        }
-        DhcpEvent::V6(v6) => {
-            let row = HostRow {
-                host_name,
-                inner: v6,
-            };
-            if serde_json::to_writer(&mut *body_v6, &row).is_ok() {
-                body_v6.push(b'\n');
-                *count_v6 += 1;
-            }
-        }
-    }
-}
+    let base_url = cfg.url.trim_end_matches('/').to_string();
+    // input_format_skip_unknown_fields lets us emit JSON keys that aren't in
+    // the schema (e.g. the original `requested_ipv6_pd` Ipv6Net string that
+    // we replace with split prefix/length columns) without ClickHouse rejecting
+    // the batch.
+    let url_v4 = format!(
+        "{base_url}/?database={db}&input_format_skip_unknown_fields=1&query=INSERT+INTO+events_v4+FORMAT+JSONEachRow",
+        db = cfg.database,
+    );
+    let url_v6 = format!(
+        "{base_url}/?database={db}&input_format_skip_unknown_fields=1&query=INSERT+INTO+events_v6+FORMAT+JSONEachRow",
+        db = cfg.database,
+    );
 
-/// POST `body` to `url`. On transport error or non-2xx, sleep and retry,
-/// draining pending events from `rx` so the channel doesn't grow unbounded.
-fn flush_with_retry(
-    agent: &Agent,
-    url: &str,
-    auth: &str,
-    body: &[u8],
-    count: usize,
-    rx: &mpsc::Receiver<DhcpEvent>,
-    dropped: &mut u64,
-) {
-    if count == 0 {
-        return;
-    }
-    loop {
-        match agent
-            .post(url)
-            .header("Authorization", auth)
-            .header("Content-Type", "application/x-ndjson")
-            .send(body)
-        {
-            Ok(resp) if resp.status().is_success() => return,
-            Ok(resp) => {
-                warn!(
-                    "ClickHouse returned HTTP {} for batch of {count}",
-                    resp.status().as_u16()
-                );
-            }
-            Err(e) => {
-                warn!("ClickHouse POST failed for batch of {count}: {e}");
-            }
-        }
-        while rx.try_recv().is_ok() {
-            *dropped += 1;
-        }
-        std::thread::sleep(RETRY_SLEEP);
-    }
-}
+    let mut sink = ChEventsSink {
+        agent: build_agent(),
+        base_url,
+        url_v4,
+        url_v6,
+        auth: basic_auth_header(&cfg.user, &cfg.password),
+        host_name: cfg.hostname.unwrap_or_else(read_hostname),
+        body_v4: Vec::with_capacity(512 * 1024),
+        body_v6: Vec::with_capacity(512 * 1024),
+        count_v4: 0,
+        count_v6: 0,
+        dropped,
+    };
 
-fn basic_auth_header(user: &str, password: &str) -> String {
-    let encoded = STANDARD.encode(format!("{user}:{password}"));
-    format!("Basic {encoded}")
-}
-
-fn read_hostname() -> String {
-    // /etc/hostname is a one-liner on Linux/BSD. Empty on macOS/Windows is
-    // fine — the ClickHouse schema defaults host_name to ''.
-    std::fs::read_to_string("/etc/hostname")
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
+    run(
+        rx,
+        &mut sink,
+        BatchConfig {
+            max_batch: MAX_BATCH,
+            max_latency: MAX_BATCH_LATENCY,
+            retry_sleep: RETRY_SLEEP,
+            max_retries: MAX_RETRIES,
+        },
+    );
 }

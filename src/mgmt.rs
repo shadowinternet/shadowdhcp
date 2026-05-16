@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::reservationdb::ReservationDb;
-use shadowdhcp::Reservation;
+use crate::Reservation;
 
 #[derive(Deserialize)]
 #[serde(tag = "command")]

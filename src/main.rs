@@ -2,28 +2,32 @@ use std::{
     io,
     net::{SocketAddr, TcpListener, UdpSocket},
     path::PathBuf,
-    sync::{mpsc, Arc},
+    sync::{atomic::AtomicU64, mpsc, Arc},
     thread,
     time::Duration,
 };
 
 use arc_swap::ArcSwap;
-use shadowdhcp::{logging, Reservation};
 
-use crate::analytics::events::DhcpEvent;
 use crate::analytics::EventSenders;
 use crate::config::Config;
-use crate::leasedb::LeaseDb;
+use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
 use crate::v4::extractors;
+use crate::{analytics::events::DhcpEvent, types::Reservation};
 
 mod analytics;
+mod batch;
+#[cfg(feature = "clickhouse")]
+mod clickhouse_http;
 mod config;
-mod leasedb;
+mod logging;
 mod mgmt;
+mod opt82_cache;
 mod reservationdb;
 #[cfg(unix)]
 mod signal;
+mod types;
 mod v4;
 mod v6;
 
@@ -85,7 +89,9 @@ fn main() {
             return;
         }
     };
-    logging::init_stdout(config.log_level);
+    // ClickHouse log writer (when enabled) returned here so we can spawn it
+    // inside `thread::scope` and join on shutdown alongside the events writer.
+    let log_writer = logging::init(&config.logging, config.clickhouse.as_ref());
     let config = Arc::new(ArcSwap::from_pointee(config));
 
     let reservations_path = config_dir.join("reservations.json");
@@ -111,27 +117,36 @@ fn main() {
     let db = ReservationDb::new();
     db.load_reservations(reservations);
     let db = Arc::new(ArcSwap::from_pointee(db));
-    let leases = Arc::new(LeaseDb::new());
+    let leases = Arc::new(Opt82Cache::new());
 
     let loaded_config = config.load();
-    let events_address = loaded_config.events_address;
+    let events_address = loaded_config.events.tcp;
     let mgmt_address = loaded_config.mgmt_address;
+    let events_queue_size = loaded_config.events.queue_size;
+
     #[cfg(feature = "clickhouse")]
-    let clickhouse_config = loaded_config.clickhouse.clone();
+    let clickhouse_config = if loaded_config.events.clickhouse.unwrap_or(true) {
+        loaded_config.clickhouse.clone()
+    } else {
+        None
+    };
     drop(loaded_config);
 
     let mut senders = EventSenders::new();
-    let tcp_rx: Option<mpsc::Receiver<DhcpEvent>> = events_address.map(|_| {
-        let (tx, rx) = mpsc::channel::<DhcpEvent>();
-        senders.push(tx);
-        rx
+    let tcp_rx: Option<(mpsc::Receiver<DhcpEvent>, Arc<AtomicU64>)> = events_address.map(|_| {
+        let (tx, rx) = mpsc::sync_channel::<DhcpEvent>(events_queue_size);
+        let dropped = Arc::new(AtomicU64::new(0));
+        senders.push(tx, dropped.clone());
+        (rx, dropped)
     });
     #[cfg(feature = "clickhouse")]
-    let clickhouse_rx: Option<mpsc::Receiver<DhcpEvent>> = clickhouse_config.as_ref().map(|_| {
-        let (tx, rx) = mpsc::channel::<DhcpEvent>();
-        senders.push(tx);
-        rx
-    });
+    let clickhouse_rx: Option<(mpsc::Receiver<DhcpEvent>, Arc<AtomicU64>)> =
+        clickhouse_config.as_ref().map(|_| {
+            let (tx, rx) = mpsc::sync_channel::<DhcpEvent>(events_queue_size);
+            let dropped = Arc::new(AtomicU64::new(0));
+            senders.push(tx, dropped.clone());
+            (rx, dropped)
+        });
     let senders = if senders.is_empty() {
         None
     } else {
@@ -152,15 +167,23 @@ fn main() {
     #[cfg(unix)]
     let _sighup_handler = signal::spawn_sighup_handler(db.clone(), config_dir.clone());
 
+    // `thread::scope` auto-joins every spawned thread when the closure
+    // returns and re-raises any panic, so we just spawn and let it manage
+    // shutdown.
     thread::scope(|s| {
-        let leasedb_cleanup_worker = leases.spawn_cleanup_thread(
-            Duration::from_hours(1),
-            Duration::from_hours(24),
-            db.clone(),
-        );
+        let cleanup_leases = leases.clone();
+        let cleanup_db = db.clone();
+        thread::Builder::new()
+            .name("opt82-cleanup".to_string())
+            .spawn_scoped(s, move || loop {
+                std::thread::sleep(Duration::from_hours(1));
+                cleanup_leases.evict_expired(Duration::from_hours(24), &cleanup_db.load());
+            })
+            .expect("opt82-cleanup spawn");
+
         let (v4db, v4leases, v4config, v4sinks) =
             (db.clone(), leases.clone(), config.clone(), senders.clone());
-        let v4worker = thread::Builder::new()
+        thread::Builder::new()
             .name("v4worker".to_string())
             .spawn_scoped(s, move || {
                 v4::v4_worker(v4_socket, v4db, v4leases, v4config, v4sinks)
@@ -169,30 +192,38 @@ fn main() {
 
         let (v6db, v6leases, v6config, v6sinks) =
             (db.clone(), leases.clone(), config.clone(), senders.clone());
-        let v6worker = thread::Builder::new()
+        thread::Builder::new()
             .name("v6worker".to_string())
             .spawn_scoped(s, move || {
                 v6::v6_worker(v6_socket, v6db, v6leases, v6config, v6sinks)
             })
             .expect("v6worker spawn");
 
-        let tcp_events_worker = events_address.zip(tcp_rx).map(|(addr, rx)| {
+        if let Some((addr, (rx, dropped))) = events_address.zip(tcp_rx) {
             thread::Builder::new()
                 .name("events-tcp".to_string())
-                .spawn_scoped(s, move || analytics::writer::tcp_writer(addr, rx))
-                .expect("events-tcp spawn")
-        });
+                .spawn_scoped(s, move || analytics::writer::tcp_writer(addr, rx, dropped))
+                .expect("events-tcp spawn");
+        }
 
         #[cfg(feature = "clickhouse")]
-        let clickhouse_worker = clickhouse_config.zip(clickhouse_rx).map(|(cfg, rx)| {
+        if let Some((cfg, (rx, dropped))) = clickhouse_config.zip(clickhouse_rx) {
             thread::Builder::new()
                 .name("events-ch".to_string())
-                .spawn_scoped(s, move || analytics::clickhouse::clickhouse_writer(cfg, rx))
-                .expect("events-ch spawn")
-        });
+                .spawn_scoped(s, move || {
+                    analytics::clickhouse::clickhouse_writer(cfg, rx, dropped)
+                })
+                .expect("events-ch spawn");
+        }
 
-        // Spawn management interface listener if configured
-        let mgmt_worker = mgmt_listener.map(|listener| {
+        if let Some(task) = log_writer {
+            thread::Builder::new()
+                .name("ch-logs".to_string())
+                .spawn_scoped(s, task)
+                .expect("ch-logs spawn");
+        }
+
+        if let Some(listener) = mgmt_listener {
             let mgmt_db = db.clone();
             let mgmt_config_dir = config_dir.clone();
             thread::Builder::new()
@@ -200,21 +231,7 @@ fn main() {
                 .spawn_scoped(s, move || {
                     mgmt::listener(listener, mgmt_db, mgmt_config_dir)
                 })
-                .expect("mgmt spawn")
-        });
-
-        v4worker.join().expect("v4worker join");
-        v6worker.join().expect("v6worker join");
-        leasedb_cleanup_worker.join().expect("leasedb cleanup join");
-        if let Some(handle) = tcp_events_worker {
-            handle.join().expect("events-tcp join");
-        }
-        #[cfg(feature = "clickhouse")]
-        if let Some(handle) = clickhouse_worker {
-            handle.join().expect("events-ch join");
-        }
-        if let Some(handle) = mgmt_worker {
-            handle.join().expect("mgmt join");
+                .expect("mgmt spawn");
         }
     });
 }
@@ -245,7 +262,7 @@ RUNTIME UPDATES:
     echo '{\"command\":\"status\"}' | nc localhost 8547
 ";
 
-const HELP_CONFIG: &str = r#"Config files are stored in a directory specified by --config-dir (defaults to current directory):
+const HELP_CONFIG: &str = r#"Config files are stored in a directory specified by --configdir (defaults to current directory):
   - ids.json contains the DHCPv4 and DHCPv6 server IDs
   - config.json server wide configuration
   - reservations.json IP reservations, can be hot reloaded. See --help-reservations
@@ -263,6 +280,10 @@ config.json:
     "dns_v4": [
         "8.8.8.8",
         "8.8.4.4"
+    ],
+    "dns_v6": [
+        "2001:4860:4860::8888",
+        "2001:4860:4860::8844"
     ],
     "subnets_v4": [
         {
@@ -288,11 +309,16 @@ config.json:
     "mac_extractors": [
         "client_linklayer_address"
     ],
-    "events_address": "127.0.0.1:9000",
+    "logging": {
+        "level": "info"
+    },
     "clickhouse": {
         "url": "https://clickhouse.example.com",
         "user": "dhcp_writer",
         "password": "changeme"
+    },
+    "events": {
+        "tcp": "127.0.0.1:9000"
     },
     "mgmt_address": "127.0.0.1:8547"
 }
@@ -301,14 +327,26 @@ Optional fields:
   - option82_extractors: List of DHCPv4 Option82 extractor functions
   - option1837_extractors: List of DHCPv6 Option18/37 extractor functions
   - mac_extractors: List of DHCPv6 MAC extraction methods (default: ["client_linklayer_address"])
-  - events_address: Address:port for analytics events (JSON over TCP)
-  - clickhouse: Direct ClickHouse writer (HTTPS). Required: url, user, password.
+  - v4_lease_time: DHCPv4 lease time, seconds (default: 3600)
+  - v6_lease_time: DHCPv6 valid lifetime, seconds (default: 12 * v4_lease_time)
+  - logging: Logging block. Fields:
+      level      - One of [trace, debug, info, warn, error] (default: info)
+      stdout     - Write to stdout (default: true if logging block present)
+      file       - { path, max_files } for in-process rotating file sink
+      clickhouse - Toggle: ship logs to dhcp.otel_logs in ClickHouse via the
+                   top-level `clickhouse` block (default: true when that block
+                   is present)
+  - clickhouse: ClickHouse connection (HTTPS). Required: url, user, password.
                 Optional: database (default "dhcp"), hostname (default: read from /etc/hostname).
-                Enabled by the "clickhouse" cargo feature (on by default). Sinks events into
-                <database>.events_v4 and <database>.events_v6 via JSONEachRow. Runs alongside
-                events_address if both are set.
+                Enabled by the "clickhouse" cargo feature (on by default). When
+                present, both events and logs are shipped here unless their
+                respective toggles are set to false.
+  - events: Event sink block. Fields:
+      queue_size - Per-sink in-memory queue capacity (default: 16384)
+      tcp        - Address:port for analytics events over TCP (JSON lines)
+      clickhouse - Toggle: insert events into dhcp.events_v4 / dhcp.events_v6
+                   (default: true when the top-level clickhouse block is set)
   - mgmt_address: Address:port for management interface (reload/replace reservations)
-  - log_level: One of [trace, debug, info, warn, error] (default: info)
   - v4_bind_address: Address:port for DHCPv4 (default: 0.0.0.0:67)
   - v6_bind_address: Address:port for DHCPv6 (default: [::]:547)
 

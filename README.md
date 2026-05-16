@@ -63,13 +63,13 @@ See [Installation on Alpine Linux](docs/installation-alpine.md) for a complete g
 * [Reservations](docs/reservations.md) - Reservation format and extractors
 * [Management](docs/management.md) - TCP management interface
 * [Events](docs/events.md) - Analytics events and ClickHouse setup
+* [Logging](docs/logging.md) - Logging to stdout, ClickHouse, or file
 
 ## Current limitations
 
 * No high availability
 * Single-threaded per protocol
-* Lease times are hardcoded
 * No duplicate reservation checking
-* Leases and MAC to Option 82 bindings aren't persisted to disk
+* MAC to Option 82 bindings aren't persisted to disk
 
 For a mature, full-featured DHCP server, consider the [Kea DHCP server](https://www.isc.org/kea/).

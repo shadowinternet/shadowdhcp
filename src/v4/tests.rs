@@ -1,12 +1,10 @@
-#![cfg(test)]
-
+use crate::types::{Duid, Option82, Reservation, V4Subnet};
 use advmac::MacAddr6;
 use dhcproto::v4::{self, DhcpOption, Flags, Opcode};
 use ipnet::Ipv6Net;
-use shadowdhcp::{Duid, Option82, Reservation, V4Subnet};
 
-use crate::config::Config;
-use crate::leasedb::LeaseDb;
+use crate::config::{Config, LeaseTimes};
+use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
 use crate::v4::extractors;
 use std::net::Ipv4Addr;
@@ -14,13 +12,12 @@ use std::net::Ipv4Addr;
 use crate::v4::{
     extensions::ShadowMessageExtV4,
     handlers::{handle_message, DhcpV4Response},
-    ADDRESS_LEASE_TIME, REBINDING_TIME, RENEWAL_TIME,
 };
 
 const TEST_MAC: MacAddr6 = MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 const TEST_MAC_2: MacAddr6 = MacAddr6::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
 
-fn create_test_env() -> (Config, ReservationDb, LeaseDb) {
+fn create_test_env() -> (Config, ReservationDb, Opt82Cache) {
     let config = Config {
         v4_server_id: Ipv4Addr::new(10, 0, 0, 1),
         dns_v4: vec![Ipv4Addr::new(8, 8, 8, 8), Ipv4Addr::new(8, 8, 4, 4)],
@@ -87,7 +84,7 @@ fn create_test_env() -> (Config, ReservationDb, LeaseDb) {
     };
     reservations.insert(reservation_both);
 
-    let leases = LeaseDb::new();
+    let leases = Opt82Cache::new();
 
     (config, reservations, leases)
 }
@@ -331,7 +328,7 @@ fn discover_includes_required_options() {
 
     // Check AddressLeaseTime
     let has_lease_time = reply.opts().iter().any(
-        |(_, opt)| matches!(opt, DhcpOption::AddressLeaseTime(time) if *time == ADDRESS_LEASE_TIME),
+        |(_, opt)| matches!(opt, DhcpOption::AddressLeaseTime(time) if *time == LeaseTimes::default().v4_lease),
     );
     assert!(has_lease_time, "AddressLeaseTime option missing");
 }
@@ -764,20 +761,20 @@ fn ack_should_include_t1_renewal_time_t2_rebinding_time() {
     let has_t1 = reply
         .opts()
         .iter()
-        .any(|(_, opt)| matches!(opt, DhcpOption::Renewal(t1) if *t1 == RENEWAL_TIME));
+        .any(|(_, opt)| matches!(opt, DhcpOption::Renewal(t1) if *t1 == LeaseTimes::default().v4_renewal));
     assert!(
         has_t1,
         "RFC 2131: DHCPACK SHOULD include T1 (Renewal Time = {})",
-        RENEWAL_TIME
+        LeaseTimes::default().v4_renewal
     );
     let has_t2 = reply
         .opts()
         .iter()
-        .any(|(_, opt)| matches!(opt, DhcpOption::Rebinding(t2) if *t2 == REBINDING_TIME));
+        .any(|(_, opt)| matches!(opt, DhcpOption::Rebinding(t2) if *t2 == LeaseTimes::default().v4_rebinding));
     assert!(
         has_t2,
         "RFC 2131: DHCPACK SHOULD include T2 (Rebinding Time = {})",
-        REBINDING_TIME
+        LeaseTimes::default().v4_rebinding
     );
 }
 
@@ -818,20 +815,20 @@ fn offer_should_include_t1_renewal_time() {
     let has_t1 = reply
         .opts()
         .iter()
-        .any(|(_, opt)| matches!(opt, DhcpOption::Renewal(t1) if *t1 == RENEWAL_TIME));
+        .any(|(_, opt)| matches!(opt, DhcpOption::Renewal(t1) if *t1 == LeaseTimes::default().v4_renewal));
     assert!(
         has_t1,
         "DHCPOFFER SHOULD include T1 (Renewal Time = {})",
-        RENEWAL_TIME
+        LeaseTimes::default().v4_renewal
     );
     let has_t2 = reply
         .opts()
         .iter()
-        .any(|(_, opt)| matches!(opt, DhcpOption::Rebinding(t2) if *t2 == REBINDING_TIME));
+        .any(|(_, opt)| matches!(opt, DhcpOption::Rebinding(t2) if *t2 == LeaseTimes::default().v4_rebinding));
     assert!(
         has_t2,
         "DHCPOFFER SHOULD include T2 (Rebinding Time = {})",
-        REBINDING_TIME
+        LeaseTimes::default().v4_rebinding
     );
 }
 

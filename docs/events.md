@@ -2,12 +2,12 @@
 
 shadowdhcp can emit JSON events for every DHCP request, enabling analytics, monitoring, and troubleshooting. Two sinks are supported and can be enabled independently:
 
-- **ClickHouse**: events are batched and inserted over HTTPS directly to Clickhouse.
+- **ClickHouse**: events are batched and inserted over HTTPS directly to ClickHouse.
 - **TCP JSON lines**: events are written to a TCP socket so an external collector can consume them.
 
 ## Enabling events
 
-Event sinks are enabled by their presence in `config.json`:
+Event sinks live in the top-level `events` block. ClickHouse connection details live in the top-level `clickhouse` block (shared with the logging subsystem). When that block is present, events automatically ship to ClickHouse unless `events.clickhouse: false` is set; the TCP sink is enabled by setting `events.tcp`:
 
 ```json
 {
@@ -16,7 +16,9 @@ Event sinks are enabled by their presence in `config.json`:
         "user": "dhcp_writer",
         "password": "changeme"
     },
-    "events_address": "127.0.0.1:9000"
+    "events": {
+        "tcp": "127.0.0.1:9000"
+    }
 }
 ```
 
@@ -25,7 +27,7 @@ If both are set, every event is delivered to both sinks. A stuck or unreachable 
 The ClickHouse writer is gated behind the `clickhouse` cargo feature (enabled by default). To build a minimal binary without it:
 
 ```bash
-cargo build --release --no-default-features
+cargo build --profile release-lto --no-default-features
 ```
 
 ## Event structure
@@ -39,7 +41,7 @@ Successful match by MAC address:
 ```json
 {
     "ip_version": "v4",
-    "timestamp_ms": 1704067200000,
+    "timestamp": 1704067200000,
     "message_type": "Discover",
     "relay_addr": "10.0.0.1",
     "mac_address": "00-11-22-33-44-55",
@@ -63,7 +65,7 @@ No reservation found:
 ```json
 {
     "ip_version": "v4",
-    "timestamp_ms": 1704067200000,
+    "timestamp": 1704067200000,
     "message_type": "Discover",
     "relay_addr": "10.0.0.1",
     "mac_address": "AA-BB-CC-DD-EE-FF",
@@ -84,7 +86,7 @@ No reservation found:
 
 | Field | Description |
 |-------|-------------|
-| `timestamp_ms` | Unix timestamp in milliseconds. |
+| `timestamp` | Unix timestamp in milliseconds. ClickHouse parses this integer as `DateTime64(3)`. |
 | `message_type` | DHCP message type: `Discover`, `Offer`, `Request`, `Ack`, `Nak`, `Release`, `Decline`. |
 | `relay_addr` | IPv4 address of the relay agent. |
 | `mac_address` | Client MAC address from chaddr field. |
@@ -102,7 +104,7 @@ Successful match by MAC address:
 ```json
 {
     "ip_version": "v6",
-    "timestamp_ms": 1704067200000,
+    "timestamp": 1704067200000,
     "message_type": "Solicit",
     "xid": "a1b2c3",
     "relay_addr": "2001:db8::1",
@@ -133,7 +135,7 @@ No reservation found:
 ```json
 {
     "ip_version": "v6",
-    "timestamp_ms": 1704067200000,
+    "timestamp": 1704067200000,
     "message_type": "Solicit",
     "xid": "d4e5f6",
     "relay_addr": "2001:db8::1",
@@ -161,7 +163,7 @@ No reservation found:
 
 | Field | Description |
 |-------|-------------|
-| `timestamp_ms` | Unix timestamp in milliseconds. |
+| `timestamp` | Unix timestamp in milliseconds. ClickHouse parses this integer as `DateTime64(3)`. |
 | `message_type` | DHCPv6 message type: `Solicit`, `Advertise`, `Request`, `Reply`, `Renew`, `Rebind`, `Release`, `Decline`. |
 | `xid` | Transaction ID from the client (hex string). |
 | `relay_addr` | IPv6 address the relay sent from. |
@@ -179,13 +181,19 @@ No reservation found:
 
 ## Event delivery
 
-Both writers share the same batching strategy:
+Both writers share the same batching shape but use different batch sizes — the TCP writer flushes at 256 events or 3 seconds of latency; the ClickHouse writer flushes at 2048 events or 3 seconds. Failed flushes are retried with ~3 second sleeps (plus jitter) for up to ~5–6 minutes before the in-flight batch is dropped with a warning, so a wedged downstream can't pin a batch in memory forever.
 
-- Batch up to 256 events or 3 seconds of latency before flushing
-- On failure, sleep for 3 seconds and retry; events arriving during the retry window are dropped to prevent unbounded memory growth
-- A warning is logged with the count of dropped events when the sink recovers
+The in-flight batch is never grown during retry — events that arrive during an outage flow into the per-sink bounded queue. When the queue is full, new events are dropped at the producer rather than back-pressuring DHCP processing; the drop count is logged once per flush cycle.
 
-The TCP writer sends newline-delimited JSON and reconnects automatically if the peer drops.
+On shutdown the writers drain the channel best-effort: each remaining batch gets one flush attempt, and the first failure ends the drain. With a healthy downstream every buffered event is delivered; with a broken downstream we exit fast rather than hanging.
+
+The TCP writer sends newline-delimited JSON and reconnects automatically if the peer drops. The ClickHouse writer uses a 3 second connect timeout and a 10 second total request timeout per POST.
+
+## Queue sizing
+
+Each events sink has its own bounded in-memory queue between the DHCP workers and the writer thread. When the queue is full (producer faster than the sink's sustained throughput), new events are dropped to prevent blocking DHCP processing. `events.queue_size` in `config.json` controls capacity; both sinks (TCP and ClickHouse) use the same value, each with its own channel.
+
+Default is **16384** events per sink. Rough memory cost per queued event is a few hundred bytes, so default footprint is ~5-10 MB per sink.
 
 ## Setting up the ClickHouse writer
 
@@ -194,18 +202,22 @@ The TCP writer sends newline-delimited JSON and reconnects automatically if the 
 Run the schema file on your ClickHouse server to create the required tables:
 
 ```bash
-clickhouse-client --password --multiquery < clickhouse_schema.sql
-
-# or if letencrypt enabled:
+# if you installed clickhouse using the included install_clickhouse.sh script:
 clickhouse-client --host clickhouse.example.com --user admin --password --port 9440 --secure --multiquery < clickhouse_schema.sql
+
+# other installations:
+clickhouse-client --password --multiquery < clickhouse_schema.sql
 ```
 
 This creates:
 - `dhcp.events_v4` - DHCPv4 events table
 - `dhcp.events_v6` - DHCPv6 events table
+- `dhcp.otel_logs` - log table (ClickStack-compatible) — see [logging](logging.md)
 - Materialized views for common aggregations (frequent clients, relay statistics)
 
-Read the comment in `clickhouse_schema.sql` for details on creating a user that only has permission to write to the DHCP event tables.
+Read the comment in `clickhouse_schema.sql` for details on creating a user that only has permission to write to the DHCP tables.
+
+The ClickHouse table column layout closely mirrors the TCP JSON shape shown above, with one shape difference: the IPv6 prefix-delegation fields (`requested_ipv6_pd`, `reservation_ipv6_pd`) are split into separate columns — `*_prefix` (typed `IPv6`) and `*_length` (typed `UInt8`) — so prefixes can be queried with ClickHouse's IP functions (`IPv6CIDRToRange`, etc.).
 
 ### 2. Add the clickhouse block to config.json
 
@@ -214,9 +226,7 @@ Read the comment in `clickhouse_schema.sql` for details on creating a user that 
     "clickhouse": {
         "url": "https://clickhouse.example.com",
         "user": "dhcp_writer",
-        "password": "REPLACE_WITH_STRONG_PASSWORD",
-        "database": "dhcp",
-        "hostname": "dhcp-sea-01"
+        "password": "REPLACE_WITH_STRONG_PASSWORD"
     }
 }
 ```
@@ -227,7 +237,7 @@ Required:
 
 Optional:
 - `database`: target database, defaults to `"dhcp"`.
-- `hostname`: value written into the `host_name` column of each row. If omitted, shadowdhcp reads `/etc/hostname` at startup. Set this when you want a logical name (e.g. `"dhcp-sea-01"`) that differs from the OS hostname.
+- `hostname`: value written into the `host_name` column of each row. If omitted, shadowdhcp reads `/etc/hostname` at startup. Set this when you want a logical name (e.g. `"dhcp-01"`) that differs from the OS hostname.
 
 ### 3. Restart shadowdhcp
 
@@ -235,51 +245,16 @@ On OpenRC: `rc-service shadowdhcp restart`.
 
 ## Setting up an external collector (TCP writer)
 
-For users who want to fan events into their own pipeline, set `events_address` in `config.json`:
+For users who want to fan events into their own pipeline, set `events.tcp` in `config.json`:
 
 ```json
 {
-    "events_address": "127.0.0.1:9000"
+    "events": {
+        "tcp": "127.0.0.1:9000"
+    }
 }
 ```
 
-shadowdhcp connects outbound to `events_address` as a TCP client, so the collector must be listening on that address. A minimal collector is a `nc -lk 9000` for debugging; production collectors would batch and forward to their own store.
-
 ## Example queries
 
-Once events are flowing to ClickHouse, you can run queries like:
-
-```sql
--- Most frequent DHCP clients
-SELECT mac_address, count() as total
-FROM dhcp.events_v4
-GROUP BY mac_address
-ORDER BY total DESC
-LIMIT 10;
-
--- Clients without reservations
-SELECT * FROM dhcp.events_v4
-WHERE success = 0 AND failure_reason = 'NoReservation'
-ORDER BY timestamp DESC
-LIMIT 100;
-
--- Requests by relay
-SELECT relay_addr, count() as total
-FROM dhcp.events_v4
-GROUP BY relay_addr
-ORDER BY total DESC;
-
--- Match method breakdown
-SELECT match_method, count() as total
-FROM dhcp.events_v4
-WHERE success = 1
-GROUP BY match_method;
-
--- Extractor usage for Option82 matches
-SELECT extractor_used, count() as total
-FROM dhcp.events_v4
-WHERE match_method = 'option82'
-GROUP BY extractor_used;
-```
-
-See `clickhouse_schema.sql` for more example queries and the full schema definition.
+See `clickhouse_schema.sql` for example queries and the full schema definition.

@@ -11,9 +11,6 @@ command_user="shadowdhcp:shadowdhcp"
 
 capabilities="^cap_net_bind_service"
 
-output_log="/var/log/shadowdhcp/shadowdhcp.log"
-error_log="/var/log/shadowdhcp/shadowdhcp.log"
-
 extra_started_commands="reload"
 description_reload="Reload DHCP reservations"
 

@@ -1,14 +1,14 @@
+use crate::types::{Duid, Reservation};
 use advmac::MacAddr6;
 use compact_str::CompactString;
 use dhcproto::v4;
 use dhcproto::v6::{self, MessageType};
 use ipnet::Ipv6Net;
 use serde::Serialize;
-use shadowdhcp::{Duid, RelayAgentInformationExt, Reservation};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::v4::extensions::ShadowMessageExtV4;
+use crate::v4::extensions::{RelayAgentInformationExt, ShadowMessageExtV4};
 use crate::v6::extensions::{ShadowMessageExtV6, ShadowRelayMessageExtV6};
 
 /// Metadata about how a reservation was matched
@@ -62,7 +62,9 @@ pub enum DhcpEvent {
 /// DHCPv4 event for analytics - enables v4/v6 correlation via mac_address
 #[derive(Clone, Serialize)]
 pub struct DhcpEventV4 {
-    pub timestamp_ms: u64,
+    /// Unix milliseconds. ClickHouse parses the integer directly into a
+    /// `DateTime64(3)` column.
+    pub timestamp: u64,
     pub message_type: Option<&'static str>,
     pub relay_addr: Ipv4Addr,
 
@@ -118,7 +120,7 @@ impl DhcpEventV4 {
         let res_option82 = reservation.and_then(|r| r.option82.as_ref());
 
         Self {
-            timestamp_ms: now(),
+            timestamp: now(),
             message_type: msg.message_type().map(Self::message_type_str),
             relay_addr,
             // Request data
@@ -150,7 +152,7 @@ impl DhcpEventV4 {
         let relay_info = msg.relay_agent_information();
 
         Self {
-            timestamp_ms: now(),
+            timestamp: now(),
             message_type: msg.message_type().map(Self::message_type_str),
             relay_addr,
             // Request data
@@ -185,10 +187,11 @@ impl DhcpEventV4 {
 /// - IPv6 addresses → ClickHouse IPv6
 /// - IPv4 addresses → ClickHouse IPv4
 /// - MAC addresses → String (enables JOIN with v4 events)
-/// - Timestamps as u64 milliseconds → ClickHouse DateTime64(3)
 #[derive(Clone, Serialize)]
 pub struct DhcpEventV6 {
-    pub timestamp_ms: u64,
+    /// Unix milliseconds. ClickHouse parses the integer directly into a
+    /// `DateTime64(3)` column.
+    pub timestamp: u64,
     pub message_type: &'static str,
     /// Transaction ID from the client (hex string)
     pub xid: String,
@@ -258,7 +261,7 @@ impl DhcpEventV6 {
         let res_option1837 = reservation.and_then(|r| r.option1837.as_ref());
 
         DhcpEventV6 {
-            timestamp_ms: now(),
+            timestamp: now(),
             message_type: Self::message_type_str(input_msg.msg_type()),
             xid: format!(
                 "{:02x}{:02x}{:02x}",
@@ -312,7 +315,7 @@ impl DhcpEventV6 {
         let option1837 = relay_msg.option1837();
 
         DhcpEventV6 {
-            timestamp_ms: now(),
+            timestamp: now(),
             message_type: Self::message_type_str(input_msg.msg_type()),
             xid: format!(
                 "{:02x}{:02x}{:02x}",

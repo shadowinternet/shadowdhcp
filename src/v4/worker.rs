@@ -9,7 +9,7 @@ use std::{
 use tracing::{debug, error, info, trace};
 
 use crate::config::Config;
-use crate::leasedb::LeaseDb;
+use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
 pub fn v4_worker(
     socket: UdpSocket,
     reservations: Arc<ArcSwap<ReservationDb>>,
-    leases: Arc<LeaseDb>,
+    leases: Arc<Opt82Cache>,
     config: Arc<ArcSwap<Config>>,
     event_channel: Option<EventSenders>,
 ) {

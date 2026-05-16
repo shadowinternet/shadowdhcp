@@ -1,16 +1,10 @@
 use core::fmt;
-use std::{
-    net::{Ipv4Addr, Ipv6Addr},
-    time::{Duration, Instant},
-};
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use advmac::MacAddr6;
 use compact_str::CompactString;
-use dhcproto::v4::relay::RelayAgentInformation;
 use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{de::Visitor, Deserialize, Serialize};
-
-pub mod logging;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct Reservation {
@@ -32,23 +26,6 @@ pub struct Reservation {
     // option1837 contains dhcpv6 option 18 and option 37, the v6 equivalent to option 82
     #[serde(skip_serializing_if = "Option::is_none")]
     pub option1837: Option<Option1837>,
-}
-
-impl Reservation {
-    /// Get the V4 key used for the reservation with the following order precedence
-    /// MAC Address, Option82
-    pub fn v4_key(&self) -> Option<V4Key> {
-        self.mac.map(V4Key::Mac).or(self
-            .option82
-            .as_ref()
-            .map(|opt| V4Key::Option82(opt.clone())))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum V4Key {
-    Mac(MacAddr6),
-    Option82(Option82),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,24 +60,6 @@ impl V4Subnet {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct LeaseV4 {
-    pub first_leased: Instant,
-    pub last_leased: Instant,
-    pub valid: Duration,
-    pub mac: MacAddr6,
-    pub option82: Option<Option82>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LeaseV6 {
-    pub first_leased: Instant,
-    pub last_leased: Instant,
-    pub valid: Duration,
-    pub duid: Duid,
-    pub mac: Option<MacAddr6>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
@@ -258,42 +217,6 @@ impl TryFrom<&str> for Duid {
             });
         }
         Ok(Duid { bytes })
-    }
-}
-
-pub trait RelayAgentInformationExt {
-    fn circuit_id(&self) -> Option<Vec<u8>>;
-    fn remote_id(&self) -> Option<Vec<u8>>;
-    fn subscriber_id(&self) -> Option<Vec<u8>>;
-}
-
-impl RelayAgentInformationExt for RelayAgentInformation {
-    fn circuit_id(&self) -> Option<Vec<u8>> {
-        self.get(dhcproto::v4::relay::RelayCode::AgentCircuitId)
-            .and_then(|ri| match ri {
-                dhcproto::v4::relay::RelayInfo::AgentCircuitId(v) if !v.is_empty() => {
-                    Some(v.clone())
-                }
-                _ => None,
-            })
-    }
-
-    fn remote_id(&self) -> Option<Vec<u8>> {
-        self.get(dhcproto::v4::relay::RelayCode::AgentRemoteId)
-            .and_then(|ri| match ri {
-                dhcproto::v4::relay::RelayInfo::AgentRemoteId(v) if !v.is_empty() => {
-                    Some(v.clone())
-                }
-                _ => None,
-            })
-    }
-
-    fn subscriber_id(&self) -> Option<Vec<u8>> {
-        self.get(dhcproto::v4::relay::RelayCode::SubscriberId)
-            .and_then(|ri| match ri {
-                dhcproto::v4::relay::RelayInfo::SubscriberId(v) if !v.is_empty() => Some(v.clone()),
-                _ => None,
-            })
     }
 }
 

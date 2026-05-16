@@ -32,7 +32,7 @@
 -- Connect test from a DHCP server inside the allowlist:
 --   clickhouse-client --host <server> --port 9440 --secure \
 --                     --user dhcp_writer --password \
---                     --query "INSERT INTO dhcp.events_v4 (timestamp_ms, success) VALUES (toUnixTimestamp64Milli(now64(3)), 1)"
+--                     --query "INSERT INTO dhcp.events_v4 (timestamp, success) VALUES (now64(3), 1)"
 -- =============================================================================
 
 CREATE DATABASE IF NOT EXISTS dhcp;
@@ -41,8 +41,7 @@ CREATE DATABASE IF NOT EXISTS dhcp;
 CREATE TABLE IF NOT EXISTS dhcp.events_v4
 (
     -- Timing
-    timestamp_ms UInt64,
-    timestamp DateTime64(3) MATERIALIZED fromUnixTimestamp64Milli(timestamp_ms),
+    timestamp DateTime64(3),
 
     -- Server identification
     host_name LowCardinality(String) DEFAULT '',
@@ -72,12 +71,14 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v4
     success UInt8,
     failure_reason LowCardinality(Nullable(String)),
 
-    -- Indices
+    -- Indices.
+    -- match_method is LowCardinality with ~5 distinct values, so a bloom
+    -- filter would be redundant — LowCardinality already gives constant-time
+    -- equality filtering. Same goes for message_type / extractor_used /
+    -- failure_reason; query them directly without a skip index.
     INDEX idx_host host_name TYPE bloom_filter GRANULARITY 4,
     INDEX idx_mac mac_address TYPE bloom_filter GRANULARITY 4,
-    INDEX idx_success success TYPE minmax GRANULARITY 1,
-    INDEX idx_reservation_ipv4 reservation_ipv4 TYPE bloom_filter GRANULARITY 4,
-    INDEX idx_match_method match_method TYPE bloom_filter GRANULARITY 4
+    INDEX idx_reservation_ipv4 reservation_ipv4 TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
@@ -89,15 +90,14 @@ SETTINGS index_granularity = 8192;
 CREATE TABLE IF NOT EXISTS dhcp.events_v6
 (
     -- Timing
-    timestamp_ms UInt64,
-    timestamp DateTime64(3) MATERIALIZED fromUnixTimestamp64Milli(timestamp_ms),
+    timestamp DateTime64(3),
 
     -- Server identification
     host_name LowCardinality(String) DEFAULT '',
 
     -- Message info
     message_type LowCardinality(String),
-    xid String,
+    xid FixedString(6),  -- DHCPv6 transaction id is exactly 3 bytes (RFC 8415); writer emits 6-char hex
     relay_addr IPv6,
     relay_link_addr IPv6,
     relay_peer_addr IPv6,
@@ -108,11 +108,13 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v6
     option1837_interface Nullable(String),
     option1837_remote Nullable(String),
     requested_ipv6_na Nullable(IPv6),
-    requested_ipv6_pd Nullable(String),  -- stored as "prefix/len" string
+    requested_ipv6_pd_prefix Nullable(IPv6),
+    requested_ipv6_pd_length Nullable(UInt8),
 
     -- Reservation data (what matched)
     reservation_ipv6_na Nullable(IPv6),
-    reservation_ipv6_pd Nullable(String),  -- stored as "prefix/len" string
+    reservation_ipv6_pd_prefix Nullable(IPv6),
+    reservation_ipv6_pd_length Nullable(UInt8),
     reservation_ipv4 Nullable(IPv4),
     reservation_mac Nullable(String),
     reservation_duid Nullable(String),
@@ -127,13 +129,12 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v6
     success UInt8,
     failure_reason LowCardinality(Nullable(String)),
 
-    -- Indices
+    -- Indices. As with events_v4, no bloom filter on match_method /
+    -- extractor_used / message_type — LowCardinality already covers them.
     INDEX idx_host host_name TYPE bloom_filter GRANULARITY 4,
     INDEX idx_mac mac_address TYPE bloom_filter GRANULARITY 4,
     INDEX idx_client_id client_id TYPE bloom_filter GRANULARITY 4,
-    INDEX idx_success success TYPE minmax GRANULARITY 1,
-    INDEX idx_reservation_ipv6_na reservation_ipv6_na TYPE bloom_filter GRANULARITY 4,
-    INDEX idx_match_method match_method TYPE bloom_filter GRANULARITY 4
+    INDEX idx_reservation_ipv6_na reservation_ipv6_na TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
@@ -141,63 +142,76 @@ ORDER BY (host_name, relay_addr, timestamp)
 TTL timestamp + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192;
 
--- Materialized view for frequent clients (v4)
--- Uses assumeNotNull since we filter WHERE mac_address IS NOT NULL
+-- Materialized views below all aggregate by `message_type` so operators can
+-- separate Discover/Request/Renew rates from one another. The source events
+-- tables expire at 90 days, but MVs are independent tables that grow until
+-- their own TTL fires — set to 365 days here.
+
+-- Materialized view for frequent clients (v4).
+-- Uses assumeNotNull since we filter WHERE mac_address IS NOT NULL.
 CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.frequent_clients_v4_mv
 ENGINE = SummingMergeTree()
-ORDER BY (host_name, mac_address, date)
+ORDER BY (host_name, mac_address, message_type, date)
+TTL date + INTERVAL 365 DAY
 AS SELECT
     host_name,
     assumeNotNull(mac_address) AS mac_address,
+    message_type,
     toDate(timestamp) AS date,
     count() AS request_count,
     countIf(success = 1) AS success_count,
     countIf(success = 0) AS failure_count
 FROM dhcp.events_v4
 WHERE mac_address IS NOT NULL
-GROUP BY host_name, mac_address, date;
+GROUP BY host_name, mac_address, message_type, date;
 
 -- Materialized view for frequent clients (v6)
 CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.frequent_clients_v6_mv
 ENGINE = SummingMergeTree()
-ORDER BY (host_name, mac_address, date)
+ORDER BY (host_name, mac_address, message_type, date)
+TTL date + INTERVAL 365 DAY
 AS SELECT
     host_name,
     assumeNotNull(mac_address) AS mac_address,
+    message_type,
     toDate(timestamp) AS date,
     count() AS request_count,
     countIf(success = 1) AS success_count,
     countIf(success = 0) AS failure_count
 FROM dhcp.events_v6
 WHERE mac_address IS NOT NULL
-GROUP BY host_name, mac_address, date;
+GROUP BY host_name, mac_address, message_type, date;
 
 -- Materialized view for relay statistics (per host)
 CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.relay_stats_v4_mv
 ENGINE = SummingMergeTree()
-ORDER BY (host_name, relay_addr, date)
+ORDER BY (host_name, relay_addr, message_type, date)
+TTL date + INTERVAL 365 DAY
 AS SELECT
     host_name,
     relay_addr,
+    message_type,
     toDate(timestamp) AS date,
     count() AS request_count,
     countIf(success = 1) AS success_count,
     countIf(success = 0) AS failure_count
 FROM dhcp.events_v4
-GROUP BY host_name, relay_addr, date;
+GROUP BY host_name, relay_addr, message_type, date;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.relay_stats_v6_mv
 ENGINE = SummingMergeTree()
-ORDER BY (host_name, relay_addr, date)
+ORDER BY (host_name, relay_addr, message_type, date)
+TTL date + INTERVAL 365 DAY
 AS SELECT
     host_name,
     relay_addr,
+    message_type,
     toDate(timestamp) AS date,
     count() AS request_count,
     countIf(success = 1) AS success_count,
     countIf(success = 0) AS failure_count
 FROM dhcp.events_v6
-GROUP BY host_name, relay_addr, date;
+GROUP BY host_name, relay_addr, message_type, date;
 
 -- Example queries:
 
@@ -243,76 +257,70 @@ GROUP BY host_name, relay_addr, date;
 -- SELECT host_name, sum(request_count) as total FROM dhcp.relay_stats_v4_mv GROUP BY host_name;
 
 -- =============================================================================
--- OTLP-compatible logs table for HyperDX
+-- HyperDX/ClickStack-compatible logs table
 -- =============================================================================
 
--- This schema follows the OpenTelemetry log data model for HyperDX compatibility
--- See: https://opentelemetry.io/docs/specs/otel/logs/data-model/
+-- Schema mirrors the layout the HyperDX UI v2 expects when you create a Source
+-- pointing at this table. shadowdhcp inserts directly via JSONEachRow over
+-- HTTPS, no OTel collector needed. To use the HyperDX UI, point a Logs Source
+-- at `dhcp.otel_logs` and the columns map automatically.
+--
+-- Reference: https://clickhouse.com/docs/use-cases/observability/clickstack/ingesting-data/schemas
 CREATE TABLE IF NOT EXISTS dhcp.otel_logs
 (
-    -- Timestamps
-    Timestamp Int64,  -- Unix nanoseconds
-    TimestampTime DateTime64(9) MATERIALIZED fromUnixTimestamp64Nano(Timestamp),
+    Timestamp DateTime64(9),
+    TimestampTime DateTime DEFAULT toDateTime(Timestamp),
 
-    -- Severity
-    SeverityText LowCardinality(String),  -- TRACE, DEBUG, INFO, WARN, ERROR
-    SeverityNumber UInt8,  -- 1-24 per OTLP spec
+    -- Trace context. shadowdhcp does not emit traces, so these are empty.
+    TraceId String,
+    SpanId String,
+    TraceFlags UInt8,
 
-    -- Log content
-    Body String,
+    -- Severity (OTLP spec: TRACE=1, DEBUG=5, INFO=9, WARN=13, ERROR=17)
+    SeverityText LowCardinality(String),
+    SeverityNumber UInt8,
 
     -- Service identification
     ServiceName LowCardinality(String),
-    HostName LowCardinality(String) DEFAULT '',
+    Body String,
 
-    -- Trace context (for correlation with distributed tracing)
-    TraceId String DEFAULT '',
-    SpanId String DEFAULT '',
-    TraceFlags UInt8 DEFAULT 0,
+    -- Resource attributes carry host.name and service.name; log attributes
+    -- carry per-event fields like target plus the enclosing span's
+    -- #[instrument] fields (mac, xid, client_id, ...).
+    ResourceSchemaUrl String,
+    ResourceAttributes Map(LowCardinality(String), String),
+    ScopeSchemaUrl String,
+    ScopeName String,
+    ScopeVersion String,
+    ScopeAttributes Map(LowCardinality(String), String),
+    LogAttributes Map(LowCardinality(String), String),
 
-    -- Attributes as JSON (flexible schema)
-    ResourceAttributes String DEFAULT '{}',  -- JSON object
-    LogAttributes String DEFAULT '{}',  -- JSON object
-
-    -- Indices
-    INDEX idx_severity SeverityNumber TYPE minmax GRANULARITY 1,
-    INDEX idx_service ServiceName TYPE bloom_filter GRANULARITY 4,
-    INDEX idx_host HostName TYPE bloom_filter GRANULARITY 4,
-    INDEX idx_trace_id TraceId TYPE bloom_filter GRANULARITY 4,
-    INDEX idx_body Body TYPE tokenbf_v1(10240, 3, 0) GRANULARITY 4
+    INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1,
+    INDEX idx_res_attr_key mapKeys(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX idx_res_attr_value mapValues(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX idx_log_attr_key mapKeys(LogAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX idx_log_attr_value mapValues(LogAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX idx_body Body TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1
 )
-ENGINE = MergeTree()
-PARTITION BY toYYYYMMDD(TimestampTime)
-ORDER BY (ServiceName, HostName, TimestampTime)
+ENGINE = MergeTree
+PARTITION BY toDate(TimestampTime)
+ORDER BY (ServiceName, TimestampTime, Timestamp)
 TTL TimestampTime + INTERVAL 30 DAY
-SETTINGS index_granularity = 8192;
-
--- Materialized view for log level counts per service and host
-CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.log_severity_stats_mv
-ENGINE = SummingMergeTree()
-ORDER BY (ServiceName, HostName, SeverityText, date)
-AS SELECT
-    ServiceName,
-    HostName,
-    SeverityText,
-    toDate(TimestampTime) AS date,
-    count() AS log_count
-FROM dhcp.otel_logs
-GROUP BY ServiceName, HostName, SeverityText, date;
+SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
 -- Example queries for otel_logs:
 
 -- Recent errors
--- SELECT TimestampTime, Body, LogAttributes FROM dhcp.otel_logs WHERE SeverityText = 'ERROR' ORDER BY TimestampTime DESC LIMIT 100;
+-- SELECT Timestamp, Body, LogAttributes FROM dhcp.otel_logs WHERE SeverityText = 'ERROR' ORDER BY Timestamp DESC LIMIT 100;
 
--- Logs by target module
--- SELECT TimestampTime, Body FROM dhcp.otel_logs WHERE JSONExtractString(LogAttributes, 'target') LIKE 'shadowdhcp::v6%' ORDER BY TimestampTime DESC LIMIT 50;
+-- Logs by source module (the `target` log attribute is the Rust module path)
+-- SELECT Timestamp, Body FROM dhcp.otel_logs WHERE LogAttributes['target'] LIKE 'shadowdhcp::v6%' ORDER BY Timestamp DESC LIMIT 50;
 
--- Log volume by severity
--- SELECT SeverityText, sum(log_count) as total FROM dhcp.log_severity_stats_mv GROUP BY SeverityText;
+-- Logs for a particular MAC (set as a span field via #[instrument])
+-- SELECT Timestamp, Body FROM dhcp.otel_logs WHERE LogAttributes['mac'] = '00-11-22-33-44-55' ORDER BY Timestamp DESC LIMIT 100;
 
--- Logs from specific host
--- SELECT TimestampTime, SeverityText, Body FROM dhcp.otel_logs WHERE HostName = 'dhcp-server-01' ORDER BY TimestampTime DESC LIMIT 100;
+-- Logs from a specific host
+-- SELECT Timestamp, SeverityText, Body FROM dhcp.otel_logs WHERE ResourceAttributes['host.name'] = 'dhcp-sea-01' ORDER BY Timestamp DESC LIMIT 100;
 
--- Error count by host
--- SELECT HostName, sum(log_count) as errors FROM dhcp.log_severity_stats_mv WHERE SeverityText = 'ERROR' GROUP BY HostName;
+-- Severity histogram, last hour
+-- SELECT SeverityText, count() FROM dhcp.otel_logs WHERE Timestamp > now() - INTERVAL 1 HOUR GROUP BY SeverityText ORDER BY 2 DESC;

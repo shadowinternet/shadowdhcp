@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
+use crate::types::{Option82, Reservation};
+use crate::v4::extensions::RelayAgentInformationExt;
 use advmac::MacAddr6;
 use compact_str::CompactString;
 use dhcproto::v4::relay::RelayAgentInformation;
-use shadowdhcp::{Option82, RelayAgentInformationExt, Reservation};
 use tracing::debug;
 
 use super::extractors::NamedOption82Extractor;

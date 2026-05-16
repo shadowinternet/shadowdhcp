@@ -1,5 +1,4 @@
-#![cfg(test)]
-
+use crate::types::{Duid, Option82, Reservation, V4Subnet};
 use advmac::MacAddr6;
 use dhcproto::{
     v6::{
@@ -9,22 +8,18 @@ use dhcproto::{
     Decodable,
 };
 use ipnet::Ipv6Net;
-use shadowdhcp::{Duid, Option82, Reservation, V4Subnet};
 
-use crate::config::Config;
-use crate::leasedb::LeaseDb;
+use crate::config::{Config, LeaseTimes};
+use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
 use crate::v6::extractors as v6_extractors;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::v6::{
-    extensions::ShadowMessageExtV6, handlers::DhcpV6Response, PREFERRED_LIFETIME, REBINDING_TIME,
-    RENEWAL_TIME, VALID_LIFETIME,
-};
+use crate::v6::{extensions::ShadowMessageExtV6, handlers::DhcpV6Response};
 
 const RESERVATION_MAC: MacAddr6 = MacAddr6::new([0, 1, 2, 3, 4, 5]);
 
-fn create_env() -> (Config, ReservationDb, LeaseDb) {
+fn create_env() -> (Config, ReservationDb, Opt82Cache) {
     let config = Config {
         v4_server_id: Ipv4Addr::new(1, 1, 1, 1),
         subnets_v4: vec![V4Subnet {
@@ -33,6 +28,7 @@ fn create_env() -> (Config, ReservationDb, LeaseDb) {
             reply_prefix_len: None,
         }],
         v6_server_id: Duid::from(vec![0, 1, 2, 3]),
+        dns_v6: vec!["2001:4860:4860::8888".parse().unwrap()],
         option1837_extractors: v6_extractors::get_all_extractors().into_iter().collect(),
         ..Default::default()
     };
@@ -50,7 +46,7 @@ fn create_env() -> (Config, ReservationDb, LeaseDb) {
     let reservations = ReservationDb::new();
     reservations.insert(reservation.clone());
 
-    let leases = LeaseDb::new();
+    let leases = Opt82Cache::new();
 
     (config, reservations, leases)
 }
@@ -771,7 +767,7 @@ fn dynamic_opt82_binding() {
     let reservations: Vec<Reservation> = serde_json::from_str(json_str).unwrap();
     let db = ReservationDb::new();
     db.load_reservations(reservations);
-    let leases = LeaseDb::new();
+    let leases = Opt82Cache::new();
     let opt82 = Option82 {
         circuit: Some("99-11-22-33-44-55".into()),
         remote: Some("eth2:100".into()),
@@ -920,26 +916,56 @@ fn rapid_commit_reply_does_not_include_preference() {
     );
 }
 
-/// RFC 8415 Section 21.4, 21.21: T1 and T2 must be less than preferred lifetime
-/// T1 = 0.5 * preferred_lifetime (RENEWAL_TIME)
-/// T2 = 0.8 * preferred_lifetime (REBINDING_TIME)
+/// RFC 8415 §21.4, §21.21: T1 = 0.5·preferred, T2 = 0.8·preferred,
+/// preferred = 0.5·valid, and T1 < T2 < preferred < valid.
 #[test]
-fn t1_t2_constants_are_rfc_compliant() {
-    // T1 should be 0.5 * preferred_lifetime
-    assert_eq!(RENEWAL_TIME, PREFERRED_LIFETIME / 2);
-    assert_eq!(RENEWAL_TIME, 1800);
-
-    // T2 should be 0.8 * preferred_lifetime
-    assert_eq!(REBINDING_TIME, PREFERRED_LIFETIME * 4 / 5);
-    assert_eq!(REBINDING_TIME, 2880);
-
-    // RFC 8415: T1 < T2 < preferred_lifetime < valid_lifetime
-    assert!(RENEWAL_TIME < REBINDING_TIME);
-    assert!(REBINDING_TIME < PREFERRED_LIFETIME);
-    assert!(PREFERRED_LIFETIME < VALID_LIFETIME);
+fn lease_times_derivation_is_rfc_compliant() {
+    for v6_valid in [7200u32, 21600, 43200, 86400] {
+        let lt = LeaseTimes::from_base(3600, v6_valid);
+        assert_eq!(lt.v6_preferred, v6_valid / 2);
+        assert_eq!(lt.v6_renewal, lt.v6_preferred / 2);
+        assert_eq!(lt.v6_rebinding, lt.v6_preferred * 4 / 5);
+        assert!(lt.v6_renewal < lt.v6_rebinding);
+        assert!(lt.v6_rebinding < lt.v6_preferred);
+        assert!(lt.v6_preferred < lt.v6_valid);
+    }
 }
 
 /// Verify that Solicit response contains correct T1/T2 values per RFC 8415
+#[test]
+fn solicit_response_includes_dns_servers() {
+    let (config, reservations, leases) = create_env();
+
+    let mut msg = Message::new(MessageType::Solicit);
+    let opts = msg.opts_mut();
+    opts.insert(DhcpOption::ClientId(vec![0xaa, 0xbb, 0xcc]));
+    opts.insert(DhcpOption::IANA(IANA {
+        id: 1,
+        t1: 0,
+        t2: 0,
+        opts: DhcpOptions::new(),
+    }));
+
+    let relay_msg = create_relay_forw(&msg);
+
+    let resp = match crate::v6::handlers::handle_message(
+        &config,
+        &reservations,
+        &leases,
+        &msg,
+        &relay_msg,
+    ) {
+        DhcpV6Response::Message(resp) => resp.message,
+        _ => panic!("Expected response"),
+    };
+
+    let dns = resp.opts().iter().find_map(|o| match o {
+        DhcpOption::DomainNameServers(addrs) => Some(addrs.clone()),
+        _ => None,
+    });
+    assert_eq!(dns.as_deref(), Some(config.dns_v6.as_slice()));
+}
+
 #[test]
 fn solicit_response_has_correct_t1_t2() {
     let (config, reservations, leases) = create_env();
@@ -977,10 +1003,26 @@ fn solicit_response_has_correct_t1_t2() {
     let iapd = resp.ia_pd().expect("Response missing IA_PD");
 
     // Verify T1 and T2 are set correctly per RFC 8415
-    assert_eq!(iana.t1, RENEWAL_TIME, "IA_NA T1 should be RENEWAL_TIME");
-    assert_eq!(iana.t2, REBINDING_TIME, "IA_NA T2 should be REBINDING_TIME");
-    assert_eq!(iapd.t1, RENEWAL_TIME, "IA_PD T1 should be RENEWAL_TIME");
-    assert_eq!(iapd.t2, REBINDING_TIME, "IA_PD T2 should be REBINDING_TIME");
+    assert_eq!(
+        iana.t1,
+        LeaseTimes::default().v6_renewal,
+        "IA_NA T1 should be LeaseTimes::default().v6_renewal"
+    );
+    assert_eq!(
+        iana.t2,
+        LeaseTimes::default().v6_rebinding,
+        "IA_NA T2 should be LeaseTimes::default().v6_rebinding"
+    );
+    assert_eq!(
+        iapd.t1,
+        LeaseTimes::default().v6_renewal,
+        "IA_PD T1 should be LeaseTimes::default().v6_renewal"
+    );
+    assert_eq!(
+        iapd.t2,
+        LeaseTimes::default().v6_rebinding,
+        "IA_PD T2 should be LeaseTimes::default().v6_rebinding"
+    );
 
     // Verify preferred and valid lifetimes in nested options
     let ia_addr = iana
@@ -991,8 +1033,8 @@ fn solicit_response_has_correct_t1_t2() {
             _ => None,
         })
         .expect("IA_NA missing IAAddr");
-    assert_eq!(ia_addr.preferred_life, PREFERRED_LIFETIME);
-    assert_eq!(ia_addr.valid_life, VALID_LIFETIME);
+    assert_eq!(ia_addr.preferred_life, LeaseTimes::default().v6_preferred);
+    assert_eq!(ia_addr.valid_life, LeaseTimes::default().v6_valid);
 
     let ia_prefix = iapd
         .opts
@@ -1002,8 +1044,11 @@ fn solicit_response_has_correct_t1_t2() {
             _ => None,
         })
         .expect("IA_PD missing IAPrefix");
-    assert_eq!(ia_prefix.preferred_lifetime, PREFERRED_LIFETIME);
-    assert_eq!(ia_prefix.valid_lifetime, VALID_LIFETIME);
+    assert_eq!(
+        ia_prefix.preferred_lifetime,
+        LeaseTimes::default().v6_preferred
+    );
+    assert_eq!(ia_prefix.valid_lifetime, LeaseTimes::default().v6_valid);
 }
 
 /// Verify that Request response contains correct T1/T2 values per RFC 8415
@@ -1044,10 +1089,26 @@ fn request_response_has_correct_t1_t2() {
     let iana = resp.ia_na().expect("Response missing IA_NA");
     let iapd = resp.ia_pd().expect("Response missing IA_PD");
 
-    assert_eq!(iana.t1, RENEWAL_TIME, "IA_NA T1 should be RENEWAL_TIME");
-    assert_eq!(iana.t2, REBINDING_TIME, "IA_NA T2 should be REBINDING_TIME");
-    assert_eq!(iapd.t1, RENEWAL_TIME, "IA_PD T1 should be RENEWAL_TIME");
-    assert_eq!(iapd.t2, REBINDING_TIME, "IA_PD T2 should be REBINDING_TIME");
+    assert_eq!(
+        iana.t1,
+        LeaseTimes::default().v6_renewal,
+        "IA_NA T1 should be LeaseTimes::default().v6_renewal"
+    );
+    assert_eq!(
+        iana.t2,
+        LeaseTimes::default().v6_rebinding,
+        "IA_NA T2 should be LeaseTimes::default().v6_rebinding"
+    );
+    assert_eq!(
+        iapd.t1,
+        LeaseTimes::default().v6_renewal,
+        "IA_PD T1 should be LeaseTimes::default().v6_renewal"
+    );
+    assert_eq!(
+        iapd.t2,
+        LeaseTimes::default().v6_rebinding,
+        "IA_PD T2 should be LeaseTimes::default().v6_rebinding"
+    );
 }
 
 /// RFC 8415 Section 18.4.5: Rebind works without Server ID (unlike Renew)
@@ -1114,10 +1175,10 @@ fn rebind_works_without_server_id() {
     let iana = resp.ia_na().expect("Response missing IA_NA");
     let iapd = resp.ia_pd().expect("Response missing IA_PD");
 
-    assert_eq!(iana.t1, RENEWAL_TIME);
-    assert_eq!(iana.t2, REBINDING_TIME);
-    assert_eq!(iapd.t1, RENEWAL_TIME);
-    assert_eq!(iapd.t2, REBINDING_TIME);
+    assert_eq!(iana.t1, LeaseTimes::default().v6_renewal);
+    assert_eq!(iana.t2, LeaseTimes::default().v6_rebinding);
+    assert_eq!(iapd.t1, LeaseTimes::default().v6_renewal);
+    assert_eq!(iapd.t2, LeaseTimes::default().v6_rebinding);
 
     // Verify addresses/prefixes
     let returned_na = resp.ia_na_address().unwrap();
@@ -1250,8 +1311,24 @@ fn renew_response_has_correct_t1_t2() {
     let iana = resp.ia_na().expect("Response missing IA_NA");
     let iapd = resp.ia_pd().expect("Response missing IA_PD");
 
-    assert_eq!(iana.t1, RENEWAL_TIME, "IA_NA T1 should be RENEWAL_TIME");
-    assert_eq!(iana.t2, REBINDING_TIME, "IA_NA T2 should be REBINDING_TIME");
-    assert_eq!(iapd.t1, RENEWAL_TIME, "IA_PD T1 should be RENEWAL_TIME");
-    assert_eq!(iapd.t2, REBINDING_TIME, "IA_PD T2 should be REBINDING_TIME");
+    assert_eq!(
+        iana.t1,
+        LeaseTimes::default().v6_renewal,
+        "IA_NA T1 should be LeaseTimes::default().v6_renewal"
+    );
+    assert_eq!(
+        iana.t2,
+        LeaseTimes::default().v6_rebinding,
+        "IA_NA T2 should be LeaseTimes::default().v6_rebinding"
+    );
+    assert_eq!(
+        iapd.t1,
+        LeaseTimes::default().v6_renewal,
+        "IA_PD T1 should be LeaseTimes::default().v6_renewal"
+    );
+    assert_eq!(
+        iapd.t2,
+        LeaseTimes::default().v6_rebinding,
+        "IA_PD T2 should be LeaseTimes::default().v6_rebinding"
+    );
 }

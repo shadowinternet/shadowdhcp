@@ -1,20 +1,16 @@
 use advmac::MacAddr6;
 use dhcproto::v4::{self, DhcpOption, Flags};
-use std::time::Duration;
 use std::{net::Ipv4Addr, sync::Arc};
 use tracing::{debug, error, field, info, instrument, warn, Span};
 
-use shadowdhcp::{Reservation, V4Key};
+use crate::types::Reservation;
 
 use crate::analytics::events::ReservationMatch;
 use crate::config::Config;
-use crate::leasedb::LeaseDb;
+use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
 
-use crate::v4::{
-    extensions::ShadowMessageExtV4, reservation::find_reservation, ADDRESS_LEASE_TIME,
-    REBINDING_TIME, RENEWAL_TIME,
-};
+use crate::v4::{extensions::ShadowMessageExtV4, reservation::find_reservation};
 
 /// A DHCPv4 response message produced by the server.
 ///
@@ -66,7 +62,7 @@ pub enum DhcpV4Response {
 /// * DHCPINFORM
 pub fn handle_message(
     reservations: &ReservationDb,
-    leases: &LeaseDb,
+    leases: &Opt82Cache,
     config: &Config,
     msg: &v4::Message,
 ) -> DhcpV4Response {
@@ -165,9 +161,9 @@ fn handle_discover(
     opts.insert(DhcpOption::SubnetMask(subnet_mask));
     opts.insert(DhcpOption::Router(vec![gateway]));
     opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
-    opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
-    opts.insert(DhcpOption::Renewal(RENEWAL_TIME));
-    opts.insert(DhcpOption::Rebinding(REBINDING_TIME));
+    opts.insert(DhcpOption::AddressLeaseTime(config.lease_times.v4_lease));
+    opts.insert(DhcpOption::Renewal(config.lease_times.v4_renewal));
+    opts.insert(DhcpOption::Rebinding(config.lease_times.v4_rebinding));
 
     DhcpV4Response::Message(ResponseMessage {
         message: reply,
@@ -185,7 +181,7 @@ fn handle_discover(
 fields(mac = field::Empty, xid = %msg.xid()))]
 fn handle_request(
     reservations: &ReservationDb,
-    leases: &LeaseDb,
+    leases: &Opt82Cache,
     config: &Config,
     msg: &v4::Message,
 ) -> DhcpV4Response {
@@ -297,21 +293,14 @@ fn handle_request(
         opts.insert(DhcpOption::SubnetMask(subnet_mask));
         opts.insert(DhcpOption::Router(vec![gateway]));
         opts.insert(DhcpOption::DomainNameServer(config.dns_v4.clone()));
-        opts.insert(DhcpOption::AddressLeaseTime(ADDRESS_LEASE_TIME));
-        opts.insert(DhcpOption::Renewal(RENEWAL_TIME));
-        opts.insert(DhcpOption::Rebinding(REBINDING_TIME));
+        opts.insert(DhcpOption::AddressLeaseTime(config.lease_times.v4_lease));
+        opts.insert(DhcpOption::Renewal(config.lease_times.v4_renewal));
+        opts.insert(DhcpOption::Rebinding(config.lease_times.v4_rebinding));
         // TODO: add support for parameter request list option
 
-        let opt82 = match reservation.v4_key() {
-            Some(V4Key::Option82(opt)) => Some(opt),
-            _ => None,
-        };
-        leases.lease_v4(
-            &reservation,
-            mac_addr,
-            opt82,
-            Duration::from_secs(u64::from(ADDRESS_LEASE_TIME)),
-        );
+        if let Some(opt) = &reservation.option82 {
+            leases.insert_mac_option82_binding(&mac_addr, opt);
+        }
     } else {
         warn!(reservation_ipv4 = %reservation.ipv4, %client_requested_ip,
             "client requested ip doesn't match reserved address, sending DHCPNAK",

@@ -51,19 +51,20 @@ rc-update add shadowdhcp default
 rc-service shadowdhcp start
 ```
 
-## 2. Install logrotate (optional)
+## 2. Configure logging
 
-```bash
-# automatically clean up log files to prevent disk exhaustion
-apk add logrotate
-cp openrc/shadowdhcp.logrotate /etc/logrotate.d/shadowdhcp
+The OpenRC service does not capture stdout — logs must be configured in `config.json`. Add a `logging.file` block before starting the service:
+
+```json
+"logging": {
+    "file": {
+        "path": "/var/log/shadowdhcp/shadowdhcp.log",
+        "max_files": 3
+    }
+}
 ```
 
-Logrotate runs daily via cron. To test manually:
-
-```bash
-logrotate -f /etc/logrotate.d/shadowdhcp
-```
+Rotation is daily, in-process; no logrotate dependency. See [logging](../docs/logging.md) for the other sinks (stdout, ClickHouse).
 
 ## 3. ClickHouse analytics (optional)
 
@@ -112,7 +113,6 @@ service shadowdhcp status
 | `/etc/shadowdhcp/` | Configuration files (root:shadowdhcp 750) |
 | `/var/log/shadowdhcp/shadowdhcp.log` | DHCP server logs (shadowdhcp:shadowdhcp 640) |
 | `/etc/init.d/shadowdhcp` | OpenRC service script |
-| `/etc/logrotate.d/shadowdhcp` | Log rotation config |
 
 ## Service Users
 
