@@ -6,12 +6,15 @@
 -- =============================================================================
 -- Creating a restricted 'dhcp_writer' user
 -- =============================================================================
--- The DHCP server(s) only need to INSERT rows into the source tables; the
--- materialized views below are populated automatically by ClickHouse, so they
--- do NOT need their own grants. The snippet below creates a user that:
+-- The DHCP server(s) INSERT rows into the source tables. The materialized
+-- views below are populated automatically by ClickHouse, but their SELECTs
+-- run *as the inserting user*, so dhcp_writer also needs SELECT on the
+-- events tables — otherwise the INSERT fails with ACCESS_DENIED while
+-- pushing to the MV. The snippet below creates a user that:
 --   * authenticates with a password (bcrypt-hashed on disk)
 --   * can INSERT into any table in the dhcp.* database
---   * CANNOT SELECT, ALTER, DROP, or access any other database
+--   * can SELECT from dhcp.* (needed for the MV push; otherwise unused)
+--   * CANNOT ALTER, DROP, or access any other database
 --   * can only connect from the IP ranges you list
 --
 -- Connect as an admin user (one with access_management = 1) and run:
@@ -21,7 +24,7 @@
 --       HOST IP '2001:db8:abcd::/48',   -- v6 subnet your DHCP servers live on
 --            IP '10.20.30.0/24';        -- v4 subnet (optional; list as many as needed)
 --
---   GRANT INSERT ON dhcp.* TO dhcp_writer;
+--   GRANT INSERT, SELECT ON dhcp.* TO dhcp_writer;
 --
 -- Useful follow-ups:
 --   SHOW GRANTS FOR dhcp_writer;
@@ -148,7 +151,11 @@ SETTINGS index_granularity = 8192;
 -- their own TTL fires — set to 365 days here.
 
 -- Materialized view for frequent clients (v4).
--- Uses assumeNotNull since we filter WHERE mac_address IS NOT NULL.
+-- `mac_address` and `message_type` are nullable in events_v4 (a malformed v4
+-- packet may omit option 53), but ORDER BY columns must be non-nullable
+-- unless `allow_nullable_key` is on. mac_address rows without a MAC are
+-- dropped (they aren't a "client"); message_type nulls are bucketed as
+-- 'Unknown' so malformed-packet counts aren't silently lost.
 CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.frequent_clients_v4_mv
 ENGINE = SummingMergeTree()
 ORDER BY (host_name, mac_address, message_type, date)
@@ -156,7 +163,7 @@ TTL date + INTERVAL 365 DAY
 AS SELECT
     host_name,
     assumeNotNull(mac_address) AS mac_address,
-    message_type,
+    ifNull(message_type, 'Unknown') AS message_type,
     toDate(timestamp) AS date,
     count() AS request_count,
     countIf(success = 1) AS success_count,
@@ -183,6 +190,8 @@ WHERE mac_address IS NOT NULL
 GROUP BY host_name, mac_address, message_type, date;
 
 -- Materialized view for relay statistics (per host)
+-- events_v4.message_type is nullable (see frequent_clients_v4_mv note); bucket
+-- nulls as 'Unknown' so the ORDER BY key stays non-nullable.
 CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.relay_stats_v4_mv
 ENGINE = SummingMergeTree()
 ORDER BY (host_name, relay_addr, message_type, date)
@@ -190,7 +199,7 @@ TTL date + INTERVAL 365 DAY
 AS SELECT
     host_name,
     relay_addr,
-    message_type,
+    ifNull(message_type, 'Unknown') AS message_type,
     toDate(timestamp) AS date,
     count() AS request_count,
     countIf(success = 1) AS success_count,
