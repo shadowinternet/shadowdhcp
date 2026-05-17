@@ -54,9 +54,18 @@ jobs:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             suffix: linux-musl-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            suffix: linux-glibc-aarch64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            suffix: linux-musl-aarch64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             suffix: windows-x86_64
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            suffix: windows-aarch64
           - target: aarch64-apple-darwin
             os: macos-latest
             suffix: macos-aarch64
@@ -73,7 +82,7 @@ jobs:
         run: rustup --version
 
       - name: Install musl-tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: endsWith(matrix.target, '-linux-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build shadowdhcp
