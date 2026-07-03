@@ -1,0 +1,496 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Chronological feed of individual DHCP lease events for debugging. Kept on its own dashboard (with auto-refresh off and a short default range) so the raw-event queries only run when you open it.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "ShadowDHCP overview",
+      "tooltip": "Back to the aggregate overview dashboard",
+      "type": "link",
+      "url": "/d/shadowdhcp-overview"
+    }
+  ],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
+      },
+      "description": "Context for the event feed below: success and failure volume in the selected range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "v4 success"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "v6 success"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "v4 failure"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "v6 failure"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(timestamp) AS time, countIf(success = 1) AS \"v4 success\", countIf(success = 0) AS \"v4 failure\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(timestamp) AS time, countIf(success = 1) AS \"v6 success\", countIf(success = 0) AS \"v6 failure\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
+          "refId": "B"
+        }
+      ],
+      "title": "Event volume",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
+      },
+      "description": "Newest first, latest 500 events in the selected range. Match shows how the reservation was found plus the request data that matched (mac, duid, or option 82/18/37 values); for unmatched requests it shows the identifiers the request carried, so you can see what failed to match. Use the Outcome and Search variables to narrow down — Search matches MAC, DUID, option 82/18/37 data, relay and reservation addresses.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "OK"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "✗"
+                      },
+                      "1": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "✓"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "custom.width",
+                "value": 50
+              },
+              {
+                "id": "custom.align",
+                "value": "center"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Proto"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Type"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Server"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 140
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MAC"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 160
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Relay"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 160
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 2,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Time"
+          }
+        ]
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT * FROM (SELECT timestamp AS \"Time\", success AS \"OK\", 'v4' AS \"Proto\", host_name AS \"Server\", coalesce(message_type, '') AS \"Type\", if(success = 1, concat('leased ', coalesce(toString(reservation_ipv4), '?'), ' to ', coalesce(mac_address, '?')), concat('failed to lease to ', coalesce(mac_address, '?'), ': ', coalesce(failure_reason, 'unknown'))) AS \"Event\", coalesce(mac_address, '') AS \"MAC\", multiIf(match_method = 'mac', concat('mac/', coalesce(extractor_used, ''), ': ', coalesce(mac_address, '')), match_method = 'option82', concat('option82/', coalesce(extractor_used, ''), ': ', arrayStringConcat(arrayFilter(x -> x != '', [coalesce(concat('circuit=', option82_circuit), ''), coalesce(concat('remote=', option82_remote), ''), coalesce(concat('subscriber=', option82_subscriber), '')]), ' ')), match_method IS NOT NULL, concat(coalesce(match_method, ''), '/', coalesce(extractor_used, '')), arrayStringConcat(arrayFilter(x -> x != '', [coalesce(concat('circuit=', option82_circuit), ''), coalesce(concat('remote=', option82_remote), ''), coalesce(concat('subscriber=', option82_subscriber), '')]), ' ')) AS \"Match\", toString(relay_addr) AS \"Relay\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND multiIf('${outcome}' = 'all', 1, '${outcome}' = 'success', success = 1, success = 0) AND ('${search}' = '' OR positionCaseInsensitive(coalesce(mac_address, ''), '${search}') > 0 OR positionCaseInsensitive(toString(relay_addr), '${search}') > 0 OR positionCaseInsensitive(coalesce(toString(reservation_ipv4), ''), '${search}') > 0 OR positionCaseInsensitive(coalesce(option82_circuit, ''), '${search}') > 0 OR positionCaseInsensitive(coalesce(option82_remote, ''), '${search}') > 0 OR positionCaseInsensitive(coalesce(option82_subscriber, ''), '${search}') > 0) UNION ALL SELECT timestamp AS \"Time\", success AS \"OK\", 'v6' AS \"Proto\", host_name AS \"Server\", message_type AS \"Type\", if(success = 1, concat('leased ', arrayStringConcat(arrayFilter(x -> x != '', [coalesce(toString(reservation_ipv6_na), ''), coalesce(concat(toString(reservation_ipv6_pd_prefix), '/', toString(reservation_ipv6_pd_length)), '')]), ' + '), ' to ', coalesce(mac_address, coalesce(client_id, '?'))), concat('failed to lease to ', coalesce(mac_address, coalesce(client_id, '?')), ': ', coalesce(failure_reason, 'unknown'))) AS \"Event\", coalesce(mac_address, '') AS \"MAC\", multiIf(match_method = 'mac', concat('mac/', coalesce(extractor_used, ''), ': ', coalesce(mac_address, '')), match_method = 'duid', concat('duid: ', coalesce(client_id, '')), match_method = 'option1837', concat('option1837/', coalesce(extractor_used, ''), ': ', arrayStringConcat(arrayFilter(x -> x != '', [coalesce(concat('interface=', option1837_interface), ''), coalesce(concat('remote=', option1837_remote), '')]), ' ')), match_method IS NOT NULL, concat(coalesce(match_method, ''), '/', coalesce(extractor_used, '')), arrayStringConcat(arrayFilter(x -> x != '', [coalesce(concat('duid=', client_id), ''), coalesce(concat('interface=', option1837_interface), ''), coalesce(concat('remote=', option1837_remote), '')]), ' ')) AS \"Match\", toString(relay_addr) AS \"Relay\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND multiIf('${outcome}' = 'all', 1, '${outcome}' = 'success', success = 1, success = 0) AND ('${search}' = '' OR positionCaseInsensitive(coalesce(mac_address, ''), '${search}') > 0 OR positionCaseInsensitive(coalesce(client_id, ''), '${search}') > 0 OR positionCaseInsensitive(toString(relay_addr), '${search}') > 0 OR positionCaseInsensitive(coalesce(toString(reservation_ipv6_na), ''), '${search}') > 0 OR positionCaseInsensitive(coalesce(concat(toString(reservation_ipv6_pd_prefix), '/', toString(reservation_ipv6_pd_length)), ''), '${search}') > 0 OR positionCaseInsensitive(coalesce(option1837_interface, ''), '${search}') > 0 OR positionCaseInsensitive(coalesce(option1837_remote, ''), '${search}') > 0)) ORDER BY \"Time\" DESC LIMIT 500",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent events (v4 + v6)",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "",
+  "schemaVersion": 42,
+  "tags": [
+    "dhcp",
+    "shadowdhcp"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "afjssfkdsa9s0b"
+        },
+        "definition": "SELECT DISTINCT host_name FROM (SELECT host_name FROM dhcp.events_v4 UNION ALL SELECT host_name FROM dhcp.events_v6) WHERE host_name != '' ORDER BY host_name",
+        "includeAll": true,
+        "label": "Server",
+        "multi": true,
+        "name": "host",
+        "options": [],
+        "query": "SELECT DISTINCT host_name FROM (SELECT host_name FROM dhcp.events_v4 UNION ALL SELECT host_name FROM dhcp.events_v6) WHERE host_name != '' ORDER BY host_name",
+        "refresh": 2,
+        "regex": "",
+        "regexApplyTo": "value",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "all",
+          "value": "all"
+        },
+        "includeAll": false,
+        "label": "Outcome",
+        "multi": false,
+        "name": "outcome",
+        "options": [
+          {
+            "selected": true,
+            "text": "all",
+            "value": "all"
+          },
+          {
+            "selected": false,
+            "text": "success",
+            "value": "success"
+          },
+          {
+            "selected": false,
+            "text": "failed",
+            "value": "failed"
+          }
+        ],
+        "query": "all, success, failed",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "label": "Search (MAC / DUID / IP / option data)",
+        "name": "search",
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ],
+        "query": "",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "6h",
+      "12h",
+      "1d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "ShadowDHCP event log",
+  "uid": "shadowdhcp-events",
+  "version": 1,
+  "weekStart": ""
+}

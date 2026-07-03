@@ -1,59 +1,4 @@
 {
-  "__inputs": [
-    {
-      "name": "DS_GRAFANA-CLICKHOUSE-DATASOURCE",
-      "label": "grafana-clickhouse-datasource",
-      "description": "",
-      "type": "datasource",
-      "pluginId": "grafana-clickhouse-datasource",
-      "pluginName": "ClickHouse"
-    }
-  ],
-  "__elements": {},
-  "__requires": [
-    {
-      "type": "panel",
-      "id": "barchart",
-      "name": "Bar chart",
-      "version": ""
-    },
-    {
-      "type": "grafana",
-      "id": "grafana",
-      "name": "Grafana",
-      "version": "12.2.1"
-    },
-    {
-      "type": "datasource",
-      "id": "grafana-clickhouse-datasource",
-      "name": "ClickHouse",
-      "version": "4.15.0"
-    },
-    {
-      "type": "panel",
-      "id": "piechart",
-      "name": "Pie chart",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "stat",
-      "name": "Stat",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "table",
-      "name": "Table",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "timeseries",
-      "name": "Time series",
-      "version": ""
-    }
-  ],
   "annotations": {
     "list": [
       {
@@ -73,14 +18,27 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "doc",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Event log (recent events)",
+      "tooltip": "Chronological feed of individual lease events for debugging",
+      "type": "link",
+      "url": "/d/shadowdhcp-events"
+    }
+  ],
   "panels": [
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
+      "description": "Total DHCPv4 requests in the selected time range.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -102,14 +60,14 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 0,
         "y": 0
       },
       "id": 1,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -122,38 +80,179 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
-          "meta": {
-            "builderOptions": {
-              "columns": [],
-              "database": "",
-              "limit": 1000,
-              "mode": "list",
-              "queryType": "table",
-              "table": ""
-            }
-          },
+          "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 hour) AS time, count() AS requests FROM dhcp.events_v4 WHERE timestamp >= now() - INTERVAL 24 HOUR AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
+          "rawSql": "SELECT count() AS \"Requests\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
           "refId": "A"
         }
       ],
-      "title": "DHCPv4 requests (24h)",
+      "title": "DHCPv4 requests",
       "type": "stat"
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 90
+              },
+              {
+                "color": "yellow",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 2) AS success_pct FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "refId": "A"
+        }
+      ],
+      "title": "DHCPv4 success rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
+      },
+      "description": "Failed DHCPv4 requests in the selected time range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT countIf(success = 0) AS \"Failures\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "refId": "A"
+        }
+      ],
+      "title": "DHCPv4 failures",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
+      },
+      "description": "Total DHCPv6 requests in the selected time range.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -175,168 +274,90 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 0
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "queryType": "table",
-          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 hour) AS time, count() AS requests FROM dhcp.events_v6 WHERE timestamp >= now() - INTERVAL 24 HOUR AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
-          "refId": "A"
-        }
-      ],
-      "title": "DHCPv6 requests (24h)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 2,
-          "mappings": [],
-          "max": 100,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 90
-              },
-              {
-                "color": "yellow",
-                "value": 95
-              },
-              {
-                "color": "green",
-                "value": 99
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 12,
-        "y": 0
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "queryType": "table",
-          "rawSql": "SELECT round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 2) AS success_pct FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
-          "refId": "A"
-        }
-      ],
-      "title": "DHCPv4 success rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 2,
-          "mappings": [],
-          "max": 100,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 90
-              },
-              {
-                "color": "yellow",
-                "value": 95
-              },
-              {
-                "color": "green",
-                "value": 99
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
         "y": 0
       },
       "id": 4,
       "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT count() AS \"Requests\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "refId": "A"
+        }
+      ],
+      "title": "DHCPv6 requests",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 90
+              },
+              {
+                "color": "yellow",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "id": 5,
+      "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "auto",
@@ -351,15 +372,15 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
           "rawSql": "SELECT round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 2) AS success_pct FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
           "refId": "A"
@@ -371,8 +392,81 @@
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
+      "description": "Failed DHCPv6 requests in the selected time range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT countIf(success = 0) AS \"Failures\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "refId": "A"
+        }
+      ],
+      "title": "DHCPv6 failures",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
+      },
+      "description": "Request volume over time, split by protocol version and outcome. Failures are dashed.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -507,7 +601,7 @@
         "x": 0,
         "y": 4
       },
-      "id": 5,
+      "id": 7,
       "options": {
         "legend": {
           "calcs": ["sum", "mean"],
@@ -521,15 +615,15 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 1,
+          "format": 0,
           "queryType": "timeseries",
           "rawSql": "SELECT $__timeInterval(timestamp) AS time, countIf(success = 1) AS \"DHCPv4 success\", countIf(success = 0) AS \"DHCPv4 failure\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
           "refId": "A"
@@ -537,10 +631,10 @@
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 1,
+          "format": 0,
           "queryType": "timeseries",
           "rawSql": "SELECT $__timeInterval(timestamp) AS time, countIf(success = 1) AS \"DHCPv6 success\", countIf(success = 0) AS \"DHCPv6 failure\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
           "refId": "B"
@@ -550,9 +644,22 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 8,
+      "panels": [],
+      "title": "Failures",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
       "fieldConfig": {
         "defaults": {
@@ -572,11 +679,11 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
+        "w": 8,
         "x": 0,
-        "y": 14
+        "y": 15
       },
-      "id": 6,
+      "id": 9,
       "options": {
         "displayLabels": ["percent"],
         "legend": {
@@ -589,7 +696,7 @@
         "reduceOptions": {
           "calcs": ["lastNotNull"],
           "fields": "",
-          "values": false
+          "values": true
         },
         "sort": "desc",
         "tooltip": {
@@ -598,15 +705,15 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
           "rawSql": "SELECT coalesce(failure_reason, 'unknown') AS reason, count() AS n FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY reason ORDER BY n DESC LIMIT 10",
           "refId": "A"
@@ -618,7 +725,7 @@
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
       "fieldConfig": {
         "defaults": {
@@ -638,11 +745,11 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 14
+        "w": 8,
+        "x": 8,
+        "y": 15
       },
-      "id": 7,
+      "id": 10,
       "options": {
         "displayLabels": ["percent"],
         "legend": {
@@ -655,7 +762,7 @@
         "reduceOptions": {
           "calcs": ["lastNotNull"],
           "fields": "",
-          "values": false
+          "values": true
         },
         "sort": "desc",
         "tooltip": {
@@ -664,15 +771,15 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
           "rawSql": "SELECT coalesce(failure_reason, 'unknown') AS reason, count() AS n FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY reason ORDER BY n DESC LIMIT 10",
           "refId": "A"
@@ -684,7 +791,188 @@
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
+      },
+      "description": "Clients with the most failed requests in the selected time range — usually devices with no reservation.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failures"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "gradient",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "yellow",
+                      "value": 0
+                    },
+                    {
+                      "color": "orange",
+                      "value": 10
+                    },
+                    {
+                      "color": "red",
+                      "value": 100
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 15
+      },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Failures"
+          }
+        ]
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT * FROM (SELECT 'v4' AS \"Proto\", coalesce(mac_address, '?') AS \"Client\", count() AS \"Failures\", arrayStringConcat(groupUniqArray(3)(coalesce(failure_reason, 'unknown')), ', ') AS \"Reasons\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY \"Client\" UNION ALL SELECT 'v6' AS \"Proto\", coalesce(mac_address, coalesce(client_id, '?')) AS \"Client\", count() AS \"Failures\", arrayStringConcat(groupUniqArray(3)(coalesce(failure_reason, 'unknown')), ', ') AS \"Reasons\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY \"Client\") ORDER BY \"Failures\" DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "Top failing clients (v4 + v6)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
+      },
+      "description": "Most recent failed requests across both protocols, newest first.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 12,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Time"
+          }
+        ]
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT * FROM (SELECT timestamp AS \"Time\", 'v4' AS \"Proto\", host_name AS \"Server\", coalesce(message_type, '') AS \"Type\", toString(relay_addr) AS \"Relay\", coalesce(mac_address, '') AS \"MAC / Client ID\", coalesce(failure_reason, '') AS \"Reason\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') UNION ALL SELECT timestamp AS \"Time\", 'v6' AS \"Proto\", host_name AS \"Server\", message_type AS \"Type\", toString(relay_addr) AS \"Relay\", coalesce(mac_address, coalesce(client_id, '')) AS \"MAC / Client ID\", coalesce(failure_reason, '') AS \"Reason\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}')) ORDER BY \"Time\" DESC LIMIT 200",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent failures (v4 + v6)",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 13,
+      "panels": [],
+      "title": "Clients & relays",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
       },
       "fieldConfig": {
         "defaults": {
@@ -696,9 +984,7 @@
             "cellOptions": {
               "type": "auto"
             },
-            "footer": {
-              "reducers": []
-            },
+            "filterable": true,
             "inspect": false
           },
           "mappings": [],
@@ -793,12 +1079,12 @@
         ]
       },
       "gridPos": {
-        "h": 12,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 23
+        "y": 35
       },
-      "id": 8,
+      "id": 14,
       "options": {
         "cellHeight": "sm",
         "showHeader": true,
@@ -809,17 +1095,17 @@
           }
         ]
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT mac_address AS \"MAC address\", count() AS \"Total\", countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\", round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 1) AS \"Success %\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND mac_address IS NOT NULL AND match(host_name, '${host:regex}') GROUP BY mac_address ORDER BY \"Total\" DESC LIMIT 25",
+          "rawSql": "SELECT mac_address AS \"MAC address\", count() AS \"Total\", countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\", round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 1) AS \"Success %\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND mac_address IS NOT NULL AND match(host_name, '${host:regex}') GROUP BY mac_address ORDER BY \"Total\" DESC LIMIT 25",
           "refId": "A"
         }
       ],
@@ -829,7 +1115,7 @@
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
       "fieldConfig": {
         "defaults": {
@@ -841,9 +1127,7 @@
             "cellOptions": {
               "type": "auto"
             },
-            "footer": {
-              "reducers": []
-            },
+            "filterable": true,
             "inspect": false
           },
           "mappings": [],
@@ -938,12 +1222,12 @@
         ]
       },
       "gridPos": {
-        "h": 12,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 35
       },
-      "id": 9,
+      "id": 15,
       "options": {
         "cellHeight": "sm",
         "showHeader": true,
@@ -954,17 +1238,17 @@
           }
         ]
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT mac_address AS \"MAC address\", count() AS \"Total\", countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\", round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 1) AS \"Success %\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND mac_address IS NOT NULL AND match(host_name, '${host:regex}') GROUP BY mac_address ORDER BY \"Total\" DESC LIMIT 25",
+          "rawSql": "SELECT mac_address AS \"MAC address\", count() AS \"Total\", countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\", round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 1) AS \"Success %\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND mac_address IS NOT NULL AND match(host_name, '${host:regex}') GROUP BY mac_address ORDER BY \"Total\" DESC LIMIT 25",
           "refId": "A"
         }
       ],
@@ -972,23 +1256,257 @@
       "type": "table"
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 35
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
       },
-      "id": 10,
-      "panels": [],
-      "title": "Drill-down: per-server, per-relay, failures",
-      "type": "row"
+      "description": "Requests per relay agent, split into successful and failed.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "OK"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 45
+      },
+      "id": 16,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT toString(relay_addr) AS relay, countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY relay ORDER BY count() DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "DHCPv4 requests by relay",
+      "type": "barchart"
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
+      "description": "Requests per relay agent, split into successful and failed.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "OK"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 45
+      },
+      "id": 17,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.4.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT toString(relay_addr) AS relay, countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY relay ORDER BY count() DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "DHCPv6 requests by relay",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "afjssfkdsa9s0b"
+      },
+      "description": "Request volume per server, both protocols.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1035,10 +1553,6 @@
               {
                 "color": "green",
                 "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -1047,12 +1561,12 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 9,
+        "h": 8,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 54
       },
-      "id": 11,
+      "id": 18,
       "options": {
         "legend": {
           "calcs": ["sum"],
@@ -1066,273 +1580,33 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 1,
+          "format": 0,
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(timestamp) AS time, host_name, count() AS requests FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time, host_name ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(timestamp) AS time, concat(host_name, ' (v4)') AS server, count() AS requests FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time, server ORDER BY time",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "afjssfkdsa9s0b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(timestamp) AS time, concat(host_name, ' (v6)') AS server, count() AS requests FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time, server ORDER BY time",
+          "refId": "B"
         }
       ],
-      "title": "DHCPv4 requests per server",
+      "title": "Requests per server",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 45
-      },
-      "id": 12,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.7,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "hidden",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "orientation": "horizontal",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "queryType": "table",
-          "rawSql": "SELECT toString(relay_addr) AS relay, count() AS requests FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY relay ORDER BY requests DESC LIMIT 20",
-          "refId": "A"
-        }
-      ],
-      "title": "DHCPv4 requests by relay",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 45
-      },
-      "id": 13,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.7,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "hidden",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "orientation": "horizontal",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "queryType": "table",
-          "rawSql": "SELECT toString(relay_addr) AS relay, count() AS requests FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY relay ORDER BY requests DESC LIMIT 20",
-          "refId": "A"
-        }
-      ],
-      "title": "DHCPv6 requests by relay",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "footer": {
-              "reducers": []
-            },
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 11,
-        "w": 24,
-        "x": 0,
-        "y": 54
-      },
-      "id": 14,
-      "options": {
-        "cellHeight": "sm",
-        "showHeader": true
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "queryType": "table",
-          "rawSql": "SELECT timestamp AS \"Time\", 'v4' AS \"Proto\", host_name AS \"Server\", toString(relay_addr) AS \"Relay\", coalesce(mac_address, '') AS \"MAC\", coalesce(failure_reason, '') AS \"Reason\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') UNION ALL SELECT timestamp AS \"Time\", 'v6' AS \"Proto\", host_name AS \"Server\", toString(relay_addr) AS \"Relay\", coalesce(mac_address, '') AS \"MAC\", coalesce(failure_reason, '') AS \"Reason\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') ORDER BY \"Time\" DESC LIMIT 200",
-          "refId": "A"
-        }
-      ],
-      "title": "Recent failures (v4 + v6)",
-      "type": "table"
     },
     {
       "collapsed": false,
@@ -1340,9 +1614,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 65
+        "y": 62
       },
-      "id": 15,
+      "id": 19,
       "panels": [],
       "title": "Matching insights",
       "type": "row"
@@ -1350,8 +1624,9 @@
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
+      "description": "How reservations were found ('unmatched' = no reservation found).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1370,11 +1645,11 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
+        "w": 8,
         "x": 0,
-        "y": 66
+        "y": 63
       },
-      "id": 16,
+      "id": 20,
       "options": {
         "displayLabels": ["percent"],
         "legend": {
@@ -1387,7 +1662,7 @@
         "reduceOptions": {
           "calcs": ["lastNotNull"],
           "fields": "",
-          "values": false
+          "values": true
         },
         "sort": "desc",
         "tooltip": {
@@ -1396,15 +1671,15 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
           "rawSql": "SELECT coalesce(match_method, 'unmatched') AS method, count() AS n FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY method ORDER BY n DESC",
           "refId": "A"
@@ -1416,8 +1691,9 @@
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
+      "description": "How reservations were found ('unmatched' = no reservation found).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1436,11 +1712,11 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 66
+        "w": 8,
+        "x": 8,
+        "y": 63
       },
-      "id": 17,
+      "id": 21,
       "options": {
         "displayLabels": ["percent"],
         "legend": {
@@ -1453,7 +1729,7 @@
         "reduceOptions": {
           "calcs": ["lastNotNull"],
           "fields": "",
-          "values": false
+          "values": true
         },
         "sort": "desc",
         "tooltip": {
@@ -1462,15 +1738,15 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
           "rawSql": "SELECT coalesce(match_method, 'unmatched') AS method, count() AS n FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY method ORDER BY n DESC",
           "refId": "A"
@@ -1482,8 +1758,9 @@
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
+      "description": "Which extractor produced each successful match, as 'version method/extractor'. Only matched requests are counted.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1526,11 +1803,11 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 75
+        "w": 8,
+        "x": 16,
+        "y": 63
       },
-      "id": 18,
+      "id": 22,
       "options": {
         "barRadius": 0,
         "barWidth": 0.7,
@@ -1553,112 +1830,21 @@
         "xTickLabelRotation": 0,
         "xTickLabelSpacing": 0
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT coalesce(extractor_used, 'none') AS extractor, count() AS n FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND match_method IS NOT NULL GROUP BY extractor ORDER BY n DESC",
+          "rawSql": "SELECT * FROM (SELECT concat('v4 ', coalesce(match_method, '?'), '/', coalesce(extractor_used, '?')) AS \"Extractor\", count() AS \"Matches\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND match_method IS NOT NULL GROUP BY \"Extractor\" UNION ALL SELECT concat('v6 ', coalesce(match_method, '?'), '/', coalesce(extractor_used, '?')) AS \"Extractor\", count() AS \"Matches\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND match_method IS NOT NULL GROUP BY \"Extractor\") ORDER BY \"Matches\" DESC",
           "refId": "A"
         }
       ],
-      "title": "DHCPv4 extractor used",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 75
-      },
-      "id": 19,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.7,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "hidden",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "orientation": "horizontal",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "queryType": "table",
-          "rawSql": "SELECT coalesce(extractor_used, 'none') AS extractor, count() AS n FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND match_method IS NOT NULL GROUP BY extractor ORDER BY n DESC",
-          "refId": "A"
-        }
-      ],
-      "title": "DHCPv6 extractor used",
+      "title": "Extractor used (v4 + v6)",
       "type": "barchart"
     },
     {
@@ -1667,9 +1853,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 72
       },
-      "id": 20,
+      "id": 23,
       "panels": [],
       "title": "Reservation churn",
       "type": "row"
@@ -1677,7 +1863,7 @@
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+        "uid": "afjssfkdsa9s0b"
       },
       "description": "Reservations being claimed by more than one distinct client identity in the selected time range. High distinct-ID counts can indicate MAC/DUID spoofing or multiple devices behind a CPE all trying to claim the same reservation.",
       "fieldConfig": {
@@ -1690,9 +1876,7 @@
             "cellOptions": {
               "type": "auto"
             },
-            "footer": {
-              "reducers": []
-            },
+            "filterable": true,
             "inspect": false
           },
           "mappings": [],
@@ -1787,9 +1971,9 @@
         "h": 11,
         "w": 24,
         "x": 0,
-        "y": 85
+        "y": 73
       },
-      "id": 21,
+      "id": 24,
       "options": {
         "cellHeight": "sm",
         "showHeader": true,
@@ -1800,17 +1984,17 @@
           }
         ]
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.4.4",
       "targets": [
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+            "uid": "afjssfkdsa9s0b"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT 'v4' AS \"Proto\", toString(reservation_ipv4) AS \"Reservation\", uniqExact(mac_address) AS \"Distinct IDs\", count() AS \"Requests\", countIf(success = 0) AS \"Failed\", arrayStringConcat(arraySlice(groupUniqArray(mac_address), 1, 5), ', ') AS \"Sample identities\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND reservation_ipv4 IS NOT NULL AND mac_address IS NOT NULL GROUP BY reservation_ipv4 HAVING uniqExact(mac_address) > 1 UNION ALL SELECT 'v6' AS \"Proto\", toString(reservation_ipv6_na) AS \"Reservation\", greatest(uniqExact(mac_address), uniqExact(client_id)) AS \"Distinct IDs\", count() AS \"Requests\", countIf(success = 0) AS \"Failed\", arrayStringConcat(arraySlice(arrayDistinct(arrayConcat(groupUniqArray(coalesce(client_id, '')), groupUniqArray(coalesce(mac_address, '')))), 1, 5), ', ') AS \"Sample identities\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND reservation_ipv6_na IS NOT NULL GROUP BY reservation_ipv6_na HAVING uniqExact(mac_address) > 1 OR uniqExact(client_id) > 1 ORDER BY \"Distinct IDs\" DESC, \"Requests\" DESC LIMIT 100",
+          "rawSql": "SELECT * FROM (SELECT 'v4' AS \"Proto\", toString(reservation_ipv4) AS \"Reservation\", uniqExact(mac_address) AS \"Distinct IDs\", count() AS \"Requests\", countIf(success = 0) AS \"Failed\", arrayStringConcat(arraySlice(groupUniqArray(mac_address), 1, 5), ', ') AS \"Sample identities\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND reservation_ipv4 IS NOT NULL AND mac_address IS NOT NULL GROUP BY reservation_ipv4 HAVING uniqExact(mac_address) > 1 UNION ALL SELECT 'v6' AS \"Proto\", toString(reservation_ipv6_na) AS \"Reservation\", greatest(uniqExact(mac_address), uniqExact(client_id)) AS \"Distinct IDs\", count() AS \"Requests\", countIf(success = 0) AS \"Failed\", arrayStringConcat(arraySlice(arrayFilter(x -> x != '', arrayDistinct(arrayConcat(groupUniqArray(coalesce(client_id, '')), groupUniqArray(coalesce(mac_address, ''))))), 1, 5), ', ') AS \"Sample identities\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND reservation_ipv6_na IS NOT NULL GROUP BY reservation_ipv6_na HAVING uniqExact(mac_address) > 1 OR uniqExact(client_id) > 1) ORDER BY \"Distinct IDs\" DESC, \"Requests\" DESC LIMIT 100",
           "refId": "A"
         }
       ],
@@ -1818,6 +2002,7 @@
       "type": "table"
     }
   ],
+  "preload": false,
   "refresh": "30s",
   "schemaVersion": 42,
   "tags": ["dhcp", "shadowdhcp"],
@@ -1825,20 +2010,24 @@
     "list": [
       {
         "allValue": ".*",
-        "current": {},
+        "current": {
+          "text": ["All"],
+          "value": ["$__all"]
+        },
         "datasource": {
           "type": "grafana-clickhouse-datasource",
-          "uid": "${DS_GRAFANA-CLICKHOUSE-DATASOURCE}"
+          "uid": "afjssfkdsa9s0b"
         },
-        "definition": "SELECT DISTINCT host_name FROM dhcp.events_v4 WHERE host_name != '' ORDER BY host_name",
+        "definition": "SELECT DISTINCT host_name FROM (SELECT host_name FROM dhcp.events_v4 UNION ALL SELECT host_name FROM dhcp.events_v6) WHERE host_name != '' ORDER BY host_name",
         "includeAll": true,
         "label": "Server",
         "multi": true,
         "name": "host",
         "options": [],
-        "query": "SELECT DISTINCT host_name FROM dhcp.events_v4 WHERE host_name != '' ORDER BY host_name",
+        "query": "SELECT DISTINCT host_name FROM (SELECT host_name FROM dhcp.events_v4 UNION ALL SELECT host_name FROM dhcp.events_v6) WHERE host_name != '' ORDER BY host_name",
         "refresh": 2,
         "regex": "",
+        "regexApplyTo": "value",
         "sort": 1,
         "type": "query"
       }
@@ -1865,6 +2054,6 @@
   "timezone": "browser",
   "title": "ShadowDHCP overview",
   "uid": "shadowdhcp-overview",
-  "version": 4,
+  "version": 1,
   "weekStart": ""
 }
