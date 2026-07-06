@@ -16,6 +16,9 @@ use crate::v4::{
 
 const TEST_MAC: MacAddr6 = MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 const TEST_MAC_2: MacAddr6 = MacAddr6::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+// Server is relay-only: messages with giaddr == 0 are rejected, so test
+// messages carry a relay address by default.
+const TEST_RELAY_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 254);
 
 fn create_test_env() -> (Config, ReservationDb, Opt82Cache) {
     let config = Config {
@@ -95,7 +98,7 @@ fn create_discover(mac: MacAddr6, xid: u32) -> v4::Message {
         Ipv4Addr::UNSPECIFIED, // ciaddr
         Ipv4Addr::UNSPECIFIED, // yiaddr
         Ipv4Addr::UNSPECIFIED, // siaddr
-        Ipv4Addr::UNSPECIFIED, // giaddr
+        TEST_RELAY_IP,         // giaddr
         &mac.to_array(),
     );
     msg.set_opcode(Opcode::BootRequest);
@@ -115,7 +118,7 @@ fn create_request_selecting(
         Ipv4Addr::UNSPECIFIED, // ciaddr must be zero
         Ipv4Addr::UNSPECIFIED,
         Ipv4Addr::UNSPECIFIED,
-        Ipv4Addr::UNSPECIFIED,
+        TEST_RELAY_IP,
         &mac.to_array(),
     );
     msg.set_opcode(Opcode::BootRequest);
@@ -132,7 +135,7 @@ fn create_request_init_reboot(mac: MacAddr6, xid: u32, requested_ip: Ipv4Addr) -
         Ipv4Addr::UNSPECIFIED, // ciaddr must be zero
         Ipv4Addr::UNSPECIFIED,
         Ipv4Addr::UNSPECIFIED,
-        Ipv4Addr::UNSPECIFIED,
+        TEST_RELAY_IP,
         &mac.to_array(),
     );
     msg.set_opcode(Opcode::BootRequest);
@@ -485,18 +488,20 @@ fn request_init_reboot_wrong_ip_returns_nak() {
 // REQUEST Tests - RENEW variant
 // ============================================================================
 
+/// Unicast RENEW has giaddr == 0, so the relay-only gate drops it even for a
+/// known client. Clients extend their lease via REBINDING through the relay.
 #[test]
-fn request_renew_returns_ack() {
+fn request_renew_unicast_is_rejected() {
     let (config, reservations, leases) = create_test_env();
     let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
     let msg = create_request_renew(TEST_MAC, 0xDDDDDDDD, reserved_ip);
 
-    let reply = match handle_message(&reservations, &leases, &config, &msg) {
-        DhcpV4Response::Message(resp) => resp.message,
-        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
-    };
+    let reply = handle_message(&reservations, &leases, &config, &msg);
 
-    assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
+    assert!(
+        matches!(reply, DhcpV4Response::NoResponse(_)),
+        "Unicast RENEW (giaddr == 0) should be rejected by the relay-only gate"
+    );
 }
 
 // ============================================================================
@@ -543,23 +548,36 @@ fn request_nak_sets_broadcast_flag_when_relayed() {
     );
 }
 
+// ============================================================================
+// Relay-only gate tests
+// ============================================================================
+
 #[test]
-fn request_nak_no_broadcast_when_not_relayed() {
+fn discover_without_giaddr_is_rejected() {
     let (config, reservations, leases) = create_test_env();
-    let wrong_ip = Ipv4Addr::new(192, 168, 1, 99);
-    let msg = create_request_init_reboot(TEST_MAC, 0xF3F3F3F3, wrong_ip);
-    // giaddr is 0 (not relayed)
+    let mut msg = create_discover(TEST_MAC, 0xF3F3F3F3);
+    msg.set_giaddr(Ipv4Addr::UNSPECIFIED);
 
-    let reply = match handle_message(&reservations, &leases, &config, &msg) {
-        DhcpV4Response::Message(resp) => resp.message,
-        DhcpV4Response::NoResponse(reason) => panic!("Expected NAK, got NoResponse({:?})", reason),
-    };
+    let reply = handle_message(&reservations, &leases, &config, &msg);
 
-    assert_eq!(reply.message_type(), Some(&v4::MessageType::Nak));
-    // Not relayed, so broadcast flag should not be forcibly set
     assert!(
-        !Flags::broadcast(&reply.flags()),
-        "Broadcast flag should not be set for non-relayed NAK"
+        matches!(reply, DhcpV4Response::NoResponse(_)),
+        "DISCOVER with giaddr == 0 should be rejected even with a valid reservation"
+    );
+}
+
+#[test]
+fn request_without_giaddr_is_rejected() {
+    let (config, reservations, leases) = create_test_env();
+    let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
+    let mut msg = create_request_selecting(TEST_MAC, 0xF3F3F3F4, config.v4_server_id, reserved_ip);
+    msg.set_giaddr(Ipv4Addr::UNSPECIFIED);
+
+    let reply = handle_message(&reservations, &leases, &config, &msg);
+
+    assert!(
+        matches!(reply, DhcpV4Response::NoResponse(_)),
+        "REQUEST with giaddr == 0 should be rejected even with a valid reservation"
     );
 }
 
@@ -699,32 +717,9 @@ fn nak_yiaddr_must_be_zero() {
     );
 }
 
-/// RFC 2131 Section 4.3.2 and Table 3: In RENEW/REBINDING ACK, yiaddr MUST be
-/// set to the assigned IP address, not 0.
-#[test]
-fn renew_ack_yiaddr_must_be_set() {
-    let (config, reservations, leases) = create_test_env();
-    let reserved_ip = Ipv4Addr::new(192, 168, 1, 100);
-    let msg = create_request_renew(TEST_MAC, 0x33334444, reserved_ip);
-
-    let reply = match handle_message(&reservations, &leases, &config, &msg) {
-        DhcpV4Response::Message(resp) => resp.message,
-        DhcpV4Response::NoResponse(reason) => panic!("Expected ACK, got NoResponse({:?})", reason),
-    };
-
-    assert_eq!(reply.message_type(), Some(&v4::MessageType::Ack));
-    // RFC 2131 Table 3: yiaddr in DHCPACK = "IP address assigned to client"
-    // Even in RENEW, the server should confirm the assigned address
-    assert_eq!(
-        reply.yiaddr(),
-        reserved_ip,
-        "RFC 2131: DHCPACK yiaddr MUST be the assigned IP, but got {} (expected {})",
-        reply.yiaddr(),
-        reserved_ip
-    );
-}
-
-/// RFC 2131: Same as above but for REBINDING variant
+/// RFC 2131 Section 4.3.2 and Table 3: In a REBINDING ACK, yiaddr MUST be
+/// set to the assigned IP address, not 0. (The RENEW variant is not covered
+/// here: unicast renews are rejected by the relay-only gate.)
 #[test]
 fn rebinding_ack_yiaddr_must_be_set() {
     let (config, reservations, leases) = create_test_env();

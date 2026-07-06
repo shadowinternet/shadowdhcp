@@ -30,6 +30,7 @@ pub enum NoResponse {
     Discarded,
     WrongServerId,
     NoMessageType,
+    NotRelayed,
 }
 
 impl NoResponse {
@@ -41,6 +42,7 @@ impl NoResponse {
             NoResponse::Discarded => "Discarded",
             NoResponse::WrongServerId => "WrongServerId",
             NoResponse::NoMessageType => "NoMessageType",
+            NoResponse::NotRelayed => "NotRelayed",
         }
     }
 }
@@ -66,6 +68,15 @@ pub fn handle_message(
     config: &Config,
     msg: &v4::Message,
 ) -> DhcpV4Response {
+    // Relay-only server: a message without giaddr never passed through a relay,
+    // so it carries no relay-inserted Option82 and nothing vouches for its
+    // chaddr. This also rejects unicast RENEW (giaddr is zero by definition);
+    // clients fall back to REBINDING through the relay at T2.
+    if msg.giaddr() == Ipv4Addr::UNSPECIFIED {
+        debug!(xid = %msg.xid(), "dropping non-relayed message (giaddr unset)");
+        return DhcpV4Response::NoResponse(NoResponse::NotRelayed);
+    }
+
     // servers should only respond to BootRequest messages
     let message_type = match msg.opcode() {
         v4::Opcode::BootRequest => match msg.message_type() {
@@ -199,6 +210,8 @@ fn handle_request(
     //    server id is not set
     //    ciaddr must be filled in
     //    requested ip address option is not filled in
+    //    NOTE: unreachable in practice -- unicast renews have giaddr == 0 and are
+    //    rejected by the relay-only gate in handle_message
     //  * REBINDING - when client can not reach server unicast, it broadcasts.
     //    same prereqs as RENEW, but sent via the relay
 

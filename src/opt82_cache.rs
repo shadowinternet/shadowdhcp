@@ -33,6 +33,10 @@ impl Opt82Cache {
         self.mac_to_opt82
             .entry(*mac)
             .and_modify(|entry| {
+                if entry.opt82 != *opt {
+                    info!(%mac, old = ?entry.opt82, new = ?opt, "updated mac -> option82 binding");
+                    entry.opt82 = opt.clone();
+                }
                 entry.last_seen = Instant::now();
             })
             .or_insert_with(|| {
@@ -151,6 +155,27 @@ mod tests {
 
         cache.evict_expired(Duration::from_millis(5), &reservations);
         assert!(cache.get_opt82_by_mac(&mac).is_some());
+    }
+
+    #[test]
+    fn insert_mac_option82_refreshes_changed_opt82() {
+        let cache = Opt82Cache::new();
+        let mac = test_mac(0x30);
+        let new_opt82 = Option82 {
+            circuit: Some("circuit2".into()),
+            remote: Some("remote2".into()),
+            subscriber: None,
+        };
+
+        // Client re-cabled: same MAC now shows up with a different Option82
+        cache.insert_mac_option82_binding(&mac, &test_option82());
+        cache.insert_mac_option82_binding(&mac, &new_opt82);
+
+        assert_eq!(
+            cache.get_opt82_by_mac(&mac),
+            Some(new_opt82),
+            "stored opt82 should be refreshed, not stuck on the first value"
+        );
     }
 
     #[test]
