@@ -11,6 +11,7 @@ use tracing::{debug, error, info, trace};
 use crate::config::Config;
 use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
+use crate::shutdown::Shutdown;
 
 use crate::{
     analytics::{
@@ -26,12 +27,22 @@ pub fn v4_worker(
     leases: Arc<Opt82Cache>,
     config: Arc<ArcSwap<Config>>,
     event_channel: Option<EventSenders>,
+    shutdown: Shutdown,
 ) {
     let mut read_buf = [0u8; 2048];
     let mut error_count: u32 = 0;
     const MAX_BACKOFF_MS: u64 = 1000;
 
+    // Wake once per second so the shutdown flag is noticed promptly.
+    socket
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set v4 socket read timeout");
+
     loop {
+        if shutdown.is_signalled() {
+            info!("v4 worker shutting down");
+            return;
+        }
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
                 error_count = 0;
@@ -41,6 +52,8 @@ pub fn v4_worker(
             }
             Err(err) => {
                 match err.kind() {
+                    // Read-timeout expiry: WouldBlock on Unix, TimedOut on Windows
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => {}
                     io::ErrorKind::ConnectionReset => {
                         info!("Sent response to host that responded with ICMP unreachable");
                     }

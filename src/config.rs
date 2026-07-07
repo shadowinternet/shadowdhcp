@@ -261,6 +261,7 @@ pub enum ConfigError {
     },
     EmptyDnsV4,
     EmptyDnsV6,
+    MgmtNotLoopback(SocketAddr),
 }
 
 trait PathContext<T> {
@@ -326,6 +327,16 @@ impl fmt::Display for ConfigError {
             }
             ConfigError::EmptyDnsV6 => {
                 write!(f, "`dns_v6` must contain at least one IPv6 address.")
+            }
+            ConfigError::MgmtNotLoopback(addr) => {
+                writeln!(
+                    f,
+                    "mgmt_address `{addr}` must be a loopback address (e.g. 127.0.0.1 or [::1])."
+                )?;
+                write!(
+                    f,
+                    "The management interface has no authentication and full write access to reservations; management clients are expected to run on the same machine."
+                )
             }
         }
     }
@@ -404,6 +415,15 @@ impl Config {
         }
         if server_config.dns_v6.is_empty() {
             return Err(ConfigError::EmptyDnsV6);
+        }
+
+        // The management interface has full write access to reservations and
+        // no authentication, so exposing it beyond loopback is refused
+        // outright.
+        if let Some(addr) = server_config.mgmt_address {
+            if !addr.ip().is_loopback() {
+                return Err(ConfigError::MgmtNotLoopback(addr));
+            }
         }
 
         // Default to ClientLinklayerAddress if no extractors configured
@@ -509,6 +529,33 @@ mod tests {
         let res = Config::load_from_files(&dir);
         std::fs::remove_dir_all(&dir).ok();
         assert!(matches!(res, Err(ConfigError::EmptyDnsV6)));
+    }
+
+    #[test]
+    fn non_loopback_mgmt_rejected() {
+        for addr in ["0.0.0.0:8547", "192.0.2.10:8547", "[2001:db8::1]:8547"] {
+            let dir = write_test_config(&format!(
+                r#"{{"dns_v4":["8.8.8.8"],"dns_v6":["2001:db8::1"],"subnets_v4":[],"mgmt_address":"{addr}"}}"#,
+            ));
+            let res = Config::load_from_files(&dir);
+            std::fs::remove_dir_all(&dir).ok();
+            assert!(
+                matches!(res, Err(ConfigError::MgmtNotLoopback(_))),
+                "{addr} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn loopback_mgmt_accepted() {
+        for addr in ["127.0.0.1:8547", "127.0.0.53:8547", "[::1]:8547"] {
+            let dir = write_test_config(&format!(
+                r#"{{"dns_v4":["8.8.8.8"],"dns_v6":["2001:db8::1"],"subnets_v4":[],"mgmt_address":"{addr}"}}"#,
+            ));
+            let res = Config::load_from_files(&dir);
+            std::fs::remove_dir_all(&dir).ok();
+            assert!(res.is_ok(), "{addr} should be accepted");
+        }
     }
 
     #[test]

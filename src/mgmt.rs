@@ -33,7 +33,17 @@ pub struct MgmtResponse {
     pub reservation_count: Option<usize>,
 }
 
-/// Main management listener loop
+/// Main management listener loop. Runs on a detached thread (outside the
+/// worker scope) and never exits on its own: on shutdown the process exit
+/// kills it wherever it is, even mid-request. That is safe because
+/// reservation persistence is an atomic write+rename — a kill at any point
+/// leaves `reservations.json` either fully old or fully new — and it keeps
+/// accept fully blocking, adding zero latency for management clients.
+///
+/// There is no authentication: the config loader guarantees the listener is
+/// bound to a loopback address, so any local process can manage the server —
+/// the same trust model as a world-readable unix socket, chosen so the
+/// interface works identically on Windows.
 pub fn listener(
     listener: TcpListener,
     reservations: Arc<ArcSwap<ReservationDb>>,
@@ -50,6 +60,8 @@ pub fn listener(
             }
             Err(e) => {
                 warn!(%e, "failed to accept management connection");
+                // Avoid a hot loop on persistent accept errors (e.g. EMFILE).
+                std::thread::sleep(Duration::from_millis(250));
             }
         }
     }
@@ -182,4 +194,34 @@ pub fn reload_from_disk(
 
     info!(count, "reloaded reservations from disk");
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_parses_tagged_commands() {
+        assert!(matches!(
+            serde_json::from_str::<MgmtRequest>(r#"{"command":"reload"}"#).unwrap(),
+            MgmtRequest::Reload
+        ));
+        assert!(matches!(
+            serde_json::from_str::<MgmtRequest>(r#"{"command":"status"}"#).unwrap(),
+            MgmtRequest::Status
+        ));
+        assert!(serde_json::from_str::<MgmtRequest>(r#"{"command":"bogus"}"#).is_err());
+    }
+
+    #[test]
+    fn request_parses_replace_with_reservations() {
+        let req: MgmtRequest = serde_json::from_str(
+            r#"{"command":"replace","reservations":[{"ipv4":"100.64.1.1","ipv6_na":"2001:db8::1","ipv6_pd":"2001:db8:1::/56","mac":"00-11-22-33-44-55"}]}"#,
+        )
+        .unwrap();
+        match req {
+            MgmtRequest::Replace { reservations } => assert_eq!(reservations.len(), 1),
+            _ => panic!("expected replace"),
+        }
+    }
 }

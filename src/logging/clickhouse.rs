@@ -18,6 +18,7 @@ use ureq::Agent;
 use crate::batch::{run, BatchConfig, BatchSink};
 use crate::clickhouse_http::{basic_auth_header, build_agent, post, read_hostname, PostOutcome};
 use crate::config::ClickHouseConfig;
+use crate::shutdown::Shutdown;
 
 const SERVICE_NAME: &str = "shadowdhcp";
 const SCOPE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -51,10 +52,15 @@ pub struct ClickHouseLogLayer {
 /// Build the layer and a closure that drains its channel into ClickHouse. The
 /// caller spawns the closure on its own thread; without that, the bounded
 /// channel will fill and rows will be dropped.
+///
+/// The layer's sender lives inside the global tracing subscriber and is never
+/// dropped, so the writer relies on `shutdown` (not channel disconnect) to
+/// know when to drain and exit.
 pub fn build(
     cfg: ClickHouseConfig,
     filter: LevelFilter,
     queue_size: usize,
+    shutdown: Shutdown,
 ) -> (super::BoxedLayer, impl FnOnce() + Send + 'static) {
     let (tx, rx) = mpsc::sync_channel::<LogRow>(queue_size);
     let dropped = Arc::new(AtomicU64::new(0));
@@ -63,7 +69,7 @@ pub fn build(
         filter,
         dropped: dropped.clone(),
     });
-    let task = move || writer(cfg, rx, dropped);
+    let task = move || writer(cfg, rx, dropped, shutdown);
     (layer, task)
 }
 
@@ -306,7 +312,12 @@ impl BatchSink<LogRow> for ChLogsSink {
     }
 }
 
-fn writer(cfg: ClickHouseConfig, rx: mpsc::Receiver<LogRow>, dropped: Arc<AtomicU64>) {
+fn writer(
+    cfg: ClickHouseConfig,
+    rx: mpsc::Receiver<LogRow>,
+    dropped: Arc<AtomicU64>,
+    shutdown: Shutdown,
+) {
     let base_url = cfg.url.trim_end_matches('/').to_string();
     let url = format!(
         "{base_url}/?database={db}&query=INSERT+INTO+otel_logs+FORMAT+JSONEachRow",
@@ -333,5 +344,6 @@ fn writer(cfg: ClickHouseConfig, rx: mpsc::Receiver<LogRow>, dropped: Arc<Atomic
             retry_sleep: RETRY_SLEEP,
             max_retries: MAX_RETRIES,
         },
+        &shutdown,
     );
 }

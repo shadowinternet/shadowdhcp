@@ -1,5 +1,6 @@
 use crate::analytics::events::DhcpEvent;
 use crate::batch::{run, BatchConfig, BatchSink};
+use crate::shutdown::Shutdown;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -110,6 +111,7 @@ pub fn tcp_writer<A: ToSocketAddrs + Debug>(
     address: A,
     rx: mpsc::Receiver<DhcpEvent>,
     dropped: Arc<AtomicU64>,
+    shutdown: Shutdown,
 ) {
     let mut sink = TcpSink {
         address,
@@ -126,6 +128,7 @@ pub fn tcp_writer<A: ToSocketAddrs + Debug>(
             retry_sleep: RECONNECT_TIMEOUT,
             max_retries: MAX_RETRIES,
         },
+        &shutdown,
     );
     if let Some(mut w) = sink.writer {
         let _ = w.writer.flush();

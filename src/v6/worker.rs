@@ -8,6 +8,7 @@ use dhcproto::{
 use crate::config::Config;
 use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
+use crate::shutdown::Shutdown;
 use std::{
     fmt::Write,
     io,
@@ -15,7 +16,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     analytics::{
@@ -31,13 +32,23 @@ pub fn v6_worker(
     leases: Arc<Opt82Cache>,
     config: Arc<ArcSwap<Config>>,
     event_channel: Option<EventSenders>,
+    shutdown: Shutdown,
 ) {
     let mut read_buf = [0u8; 2048];
     let mut error_count: u32 = 0;
     const MAX_BACKOFF_MS: u64 = 1000;
 
+    // Wake once per second so the shutdown flag is noticed promptly.
+    socket
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set v6 socket read timeout");
+
     // listen for messages
     loop {
+        if shutdown.is_signalled() {
+            info!("v6 worker shutting down");
+            return;
+        }
         // if the src is not listening on response, it may send a ICMP host unreachable
         let (amount, src) = match socket.recv_from(&mut read_buf) {
             Ok((amount, src)) => {
@@ -48,6 +59,8 @@ pub fn v6_worker(
             }
             Err(err) => {
                 match err.kind() {
+                    // Read-timeout expiry: WouldBlock on Unix, TimedOut on Windows
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => {}
                     io::ErrorKind::ConnectionReset => {
                         error!("Sent response to host that responded with ICMP unreachable");
                     }

@@ -45,7 +45,7 @@ Example:
 | `logging` | Object | If not present, logs to stdout at INFO | Log level and sinks: stdout, rotating file, ClickHouse. See [logging](logging.md). |
 | `clickhouse` | Object | None | ClickHouse connection (URL, credentials, database, hostname). When present, events and logs both ship here by default. See [ClickHouse](#clickhouse). |
 | `events` | Object | `{}` | DHCP event sinks: TCP and/or ClickHouse toggle, plus shared queue sizing. See [events](events.md). |
-| `mgmt_address` | Socket address | None | Address for the management socket. See [management](management.md). |
+| `mgmt_address` | Socket address | None | Address for the management socket. Must be a loopback address (127.0.0.1 or [::1]) — the interface has no authentication. See [management](management.md#security). |
 | `v4_bind_address` | Socket address | `"0.0.0.0:67"` | Address to bind the DHCPv4 server. |
 | `v6_bind_address` | Socket address | `"[::]:547"` | Address to bind the DHCPv6 server. |
 

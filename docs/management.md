@@ -12,6 +12,14 @@ Configure the server to listen in `config.json`:
 }
 ```
 
+## Security
+
+The management interface has full write access to reservations and no authentication, so `mgmt_address` **must be a loopback address** (e.g. `127.0.0.1` or `[::1]`) — the server refuses to start otherwise. The trust model is the same as a unix domain socket without restrictive file permissions: any process on the machine can connect, but nothing off the machine can. TCP is used instead of a unix socket so the interface works identically on Windows.
+
+The intended integration is a companion process running on the same machine as shadowdhcp — for example, a small daemon that pulls reservations from your billing system and pushes them with `replace`.
+
+If the connection closes without a response (for example, the server shut down mid-request), the outcome is indeterminate: a `replace` may or may not have persisted. Reservation persistence is an atomic write+rename, so the file is never corrupted — reconnect and verify with `status`, or simply resend; `replace` is idempotent.
+
 ## Message types
 
 * Reload - reload reservations from `reservations.json`

@@ -11,6 +11,7 @@ use crate::analytics::events::{DhcpEvent, DhcpEventV6};
 use crate::batch::{run, BatchConfig, BatchSink};
 use crate::clickhouse_http::{basic_auth_header, build_agent, post, read_hostname, PostOutcome};
 use crate::config::ClickHouseConfig;
+use crate::shutdown::Shutdown;
 
 const MAX_BATCH: usize = 2048;
 const MAX_BATCH_LATENCY: Duration = Duration::from_secs(3);
@@ -181,6 +182,7 @@ pub fn clickhouse_writer(
     cfg: ClickHouseConfig,
     rx: mpsc::Receiver<DhcpEvent>,
     dropped: Arc<AtomicU64>,
+    shutdown: Shutdown,
 ) {
     let base_url = cfg.url.trim_end_matches('/').to_string();
     // input_format_skip_unknown_fields lets us emit JSON keys that aren't in
@@ -219,5 +221,6 @@ pub fn clickhouse_writer(
             retry_sleep: RETRY_SLEEP,
             max_retries: MAX_RETRIES,
         },
+        &shutdown,
     );
 }

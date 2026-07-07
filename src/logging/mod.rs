@@ -1,5 +1,4 @@
 use std::io::IsTerminal;
-use std::sync::OnceLock;
 
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
@@ -10,35 +9,35 @@ use tracing_subscriber::{
 pub mod clickhouse;
 
 use crate::config::{ClickHouseConfig, FileLogConfig, LoggingConfig};
+use crate::shutdown::Shutdown;
 
 type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
 
-/// Background worker guards kept alive for the process lifetime — dropping
-/// them would shut down the writer threads.
-static GUARDS: OnceLock<Guards> = OnceLock::new();
-
-#[allow(dead_code)]
-struct Guards {
-    file_worker: Option<WorkerGuard>,
+/// Background worker guards returned to the caller, who holds them until the
+/// end of `main` — dropping them flushes and shuts down the writer threads.
+pub struct LogGuards {
+    _file_worker: Option<WorkerGuard>,
 }
 
 /// Background closure the caller spawns after `init` returns. Today this is
-/// just the ClickHouse writer; the file appender's `WorkerGuard` is parked in
-/// `GUARDS` and stdout runs synchronously in the tracing pipeline. `Option`
-/// is `Some` only when the ClickHouse sink is enabled.
+/// just the ClickHouse writer; the file appender's `WorkerGuard` is returned
+/// in `LogGuards` and stdout runs synchronously in the tracing pipeline.
+/// `Option` is `Some` only when the ClickHouse sink is enabled.
 pub type LogWriterTask = Box<dyn FnOnce() + Send + 'static>;
 
 /// Install the tracing subscriber with the sinks described in `cfg` and
 /// return the ClickHouse writer task (when the feature is on and the sink is
-/// configured) for the caller to spawn. Without spawning it, the layer's
-/// bounded channel will fill and rows will be dropped.
+/// configured) for the caller to spawn, plus the guards the caller must keep
+/// alive until exit. Without spawning the task, the layer's bounded channel
+/// will fill and rows will be dropped.
 ///
 /// If no sink resolves to enabled, falls back to stdout so the process isn't
 /// silently deaf.
 pub fn init(
     cfg: &LoggingConfig,
     clickhouse_cfg: Option<&ClickHouseConfig>,
-) -> Option<LogWriterTask> {
+    shutdown: Shutdown,
+) -> (Option<LogWriterTask>, LogGuards) {
     let filter = LevelFilter::from_level(cfg.level);
 
     let mut layers: Vec<BoxedLayer> = Vec::new();
@@ -66,13 +65,13 @@ pub fn init(
     #[cfg(feature = "clickhouse")]
     let log_writer: Option<LogWriterTask> =
         clickhouse_cfg.filter(|_| cfg.clickhouse).map(|ch_cfg| {
-            let (layer, task) = clickhouse::build(ch_cfg.clone(), filter, cfg.queue_size);
+            let (layer, task) = clickhouse::build(ch_cfg.clone(), filter, cfg.queue_size, shutdown);
             layers.push(layer);
             Box::new(task) as LogWriterTask
         });
     #[cfg(not(feature = "clickhouse"))]
     let log_writer: Option<LogWriterTask> = {
-        let _ = clickhouse_cfg;
+        let _ = (clickhouse_cfg, shutdown);
         None
     };
 
@@ -83,11 +82,12 @@ pub fn init(
 
     tracing_subscriber::registry().with(layers).init();
 
-    let _ = GUARDS.set(Guards {
-        file_worker: file_guard,
-    });
-
-    log_writer
+    (
+        log_writer,
+        LogGuards {
+            _file_worker: file_guard,
+        },
+    )
 }
 
 /// TTY-aware stdout layer: pretty when attached to a terminal, JSON when piped.

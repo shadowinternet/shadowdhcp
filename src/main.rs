@@ -25,6 +25,7 @@ mod logging;
 mod mgmt;
 mod opt82_cache;
 mod reservationdb;
+mod shutdown;
 #[cfg(unix)]
 mod signal;
 mod types;
@@ -79,19 +80,26 @@ fn main() {
             "Unexpected arguments: {:?}\n Run `shadowdhcp --help` for usage",
             remaining
         );
-        return;
+        std::process::exit(1);
     }
+
+    let shutdown = shutdown::Shutdown::new();
 
     let config = match Config::load_from_files(&config_dir) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Unable to a load config file: {e}");
-            return;
+            eprintln!("Unable to load config file: {e}");
+            std::process::exit(1);
         }
     };
     // ClickHouse log writer (when enabled) returned here so we can spawn it
     // inside `thread::scope` and join on shutdown alongside the events writer.
-    let log_writer = logging::init(&config.logging, config.clickhouse.as_ref());
+    // The guards flush buffered file logs when they drop at the end of main.
+    let (log_writer, _log_guards) = logging::init(
+        &config.logging,
+        config.clickhouse.as_ref(),
+        shutdown.clone(),
+    );
     let config = Arc::new(ArcSwap::from_pointee(config));
 
     let reservations_path = config_dir.join("reservations.json");
@@ -100,7 +108,7 @@ fn main() {
             Ok(res) => res,
             Err(e) => {
                 eprintln!("Failed to parse {}: {e}", reservations_path.display());
-                return;
+                std::process::exit(1);
             }
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -109,7 +117,7 @@ fn main() {
         }
         Err(e) => {
             eprintln!("Failed to open {}: {e}", reservations_path.display());
-            return;
+            std::process::exit(1);
         }
     };
     tracing::info!("Loaded {} reservations", reservations.len());
@@ -163,55 +171,93 @@ fn main() {
         tracing::info!("Bound management to {}", addr);
     }
 
-    // Spawn SIGHUP handler (Unix only, before thread::scope since it runs forever)
+    // Spawn signal handler (Unix only, before thread::scope; it exits on its
+    // own after signalling shutdown). SIGHUP reloads reservations,
+    // SIGTERM/SIGINT drain and exit.
     #[cfg(unix)]
-    let _sighup_handler = signal::spawn_sighup_handler(db.clone(), config_dir.clone());
+    let _signal_handler =
+        signal::spawn_signal_handler(db.clone(), config_dir.clone(), shutdown.clone());
+
+    // Management listener runs detached, not in the scope below: it blocks
+    // in accept() with no wakeup mechanism and simply dies with the process
+    // on shutdown. Safe even mid-request — reservation persistence is an
+    // atomic write+rename — and keeps blocking accept, so management
+    // clients see no polling latency.
+    if let Some(listener) = mgmt_listener {
+        let mgmt_db = db.clone();
+        let mgmt_config_dir = config_dir.clone();
+        thread::Builder::new()
+            .name("mgmt".to_string())
+            .spawn(move || mgmt::listener(listener, mgmt_db, mgmt_config_dir))
+            .expect("mgmt spawn");
+    }
 
     // `thread::scope` auto-joins every spawned thread when the closure
-    // returns and re-raises any panic, so we just spawn and let it manage
-    // shutdown.
+    // returns and re-raises any panic. Every thread watches `shutdown`
+    // (directly or via its channel disconnecting), so on SIGTERM the scope
+    // unwinds cleanly and main returns, flushing the log guards.
     thread::scope(|s| {
         let cleanup_leases = leases.clone();
         let cleanup_db = db.clone();
+        let cleanup_shutdown = shutdown.clone();
         thread::Builder::new()
             .name("opt82-cleanup".to_string())
-            .spawn_scoped(s, move || loop {
-                std::thread::sleep(Duration::from_hours(1));
-                cleanup_leases.evict_expired(Duration::from_hours(24), &cleanup_db.load());
+            .spawn_scoped(s, move || {
+                while !cleanup_shutdown.wait_timeout(Duration::from_hours(1)) {
+                    cleanup_leases.evict_expired(Duration::from_hours(24), &cleanup_db.load());
+                }
             })
             .expect("opt82-cleanup spawn");
 
-        let (v4db, v4leases, v4config, v4sinks) =
-            (db.clone(), leases.clone(), config.clone(), senders.clone());
+        let (v4db, v4leases, v4config, v4sinks, v4shutdown) = (
+            db.clone(),
+            leases.clone(),
+            config.clone(),
+            senders.clone(),
+            shutdown.clone(),
+        );
         thread::Builder::new()
             .name("v4worker".to_string())
             .spawn_scoped(s, move || {
-                v4::v4_worker(v4_socket, v4db, v4leases, v4config, v4sinks)
+                v4::v4_worker(v4_socket, v4db, v4leases, v4config, v4sinks, v4shutdown)
             })
             .expect("v4worker spawn");
 
-        let (v6db, v6leases, v6config, v6sinks) =
-            (db.clone(), leases.clone(), config.clone(), senders.clone());
+        let (v6db, v6leases, v6config, v6sinks, v6shutdown) = (
+            db.clone(),
+            leases.clone(),
+            config.clone(),
+            senders.clone(),
+            shutdown.clone(),
+        );
         thread::Builder::new()
             .name("v6worker".to_string())
             .spawn_scoped(s, move || {
-                v6::v6_worker(v6_socket, v6db, v6leases, v6config, v6sinks)
+                v6::v6_worker(v6_socket, v6db, v6leases, v6config, v6sinks, v6shutdown)
             })
             .expect("v6worker spawn");
 
+        // Only the workers hold event senders from here on, so once they
+        // exit the writers see their channels disconnect and drain.
+        drop(senders);
+
         if let Some((addr, (rx, dropped))) = events_address.zip(tcp_rx) {
+            let writer_shutdown = shutdown.clone();
             thread::Builder::new()
                 .name("events-tcp".to_string())
-                .spawn_scoped(s, move || analytics::writer::tcp_writer(addr, rx, dropped))
+                .spawn_scoped(s, move || {
+                    analytics::writer::tcp_writer(addr, rx, dropped, writer_shutdown)
+                })
                 .expect("events-tcp spawn");
         }
 
         #[cfg(feature = "clickhouse")]
         if let Some((cfg, (rx, dropped))) = clickhouse_config.zip(clickhouse_rx) {
+            let writer_shutdown = shutdown.clone();
             thread::Builder::new()
                 .name("events-ch".to_string())
                 .spawn_scoped(s, move || {
-                    analytics::clickhouse::clickhouse_writer(cfg, rx, dropped)
+                    analytics::clickhouse::clickhouse_writer(cfg, rx, dropped, writer_shutdown)
                 })
                 .expect("events-ch spawn");
         }
@@ -222,18 +268,9 @@ fn main() {
                 .spawn_scoped(s, task)
                 .expect("ch-logs spawn");
         }
-
-        if let Some(listener) = mgmt_listener {
-            let mgmt_db = db.clone();
-            let mgmt_config_dir = config_dir.clone();
-            thread::Builder::new()
-                .name("mgmt".to_string())
-                .spawn_scoped(s, move || {
-                    mgmt::listener(listener, mgmt_db, mgmt_config_dir)
-                })
-                .expect("mgmt spawn");
-        }
     });
+
+    tracing::info!("shutdown complete");
 }
 
 const HELP: &str = "\
@@ -346,7 +383,10 @@ Optional fields:
       tcp        - Address:port for analytics events over TCP (JSON lines)
       clickhouse - Toggle: insert events into dhcp.events_v4 / dhcp.events_v6
                    (default: true when the top-level clickhouse block is set)
-  - mgmt_address: Address:port for management interface (reload/replace reservations)
+  - mgmt_address: Address:port for management interface (reload/replace
+                  reservations). Must be a loopback address; the interface
+                  has no authentication, so any local process can use it.
+                  Management clients are expected to run on this machine.
   - v4_bind_address: Address:port for DHCPv4 (default: 0.0.0.0:67)
   - v6_bind_address: Address:port for DHCPv6 (default: [::]:547)
 
