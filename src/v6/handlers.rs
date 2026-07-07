@@ -79,7 +79,7 @@ fn handle_solicit(
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
 
-    Span::current().record("client_id", field::display(&client_id.to_string()));
+    Span::current().record("client_id", field::display(&client_id));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     if msg.server_id().is_some() {
@@ -198,7 +198,7 @@ fn handle_renew(
         },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
-    Span::current().record("client_id", field::display(&client_id.to_string()));
+    Span::current().record("client_id", field::display(&client_id));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     // message MUST include ServerIdentifier option AND match this Server's identity
@@ -341,7 +341,7 @@ fn handle_request(
         },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
-    Span::current().record("client_id", field::display(&client_id.to_string()));
+    Span::current().record("client_id", field::display(&client_id));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     // message MUST include ServerIdentifier option AND match this Server's identity
@@ -440,7 +440,7 @@ fn handle_rebind(
         },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
-    Span::current().record("client_id", field::display(&client_id.to_string()));
+    Span::current().record("client_id", field::display(&client_id));
     relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     // RFC 8415 Section 18.4.5: Rebind messages should NOT contain a Server Identifier
