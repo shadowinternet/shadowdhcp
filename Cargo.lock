@@ -190,7 +190,7 @@ dependencies = [
 [[package]]
 name = "dhcproto"
 version = "0.13.0-alpha"
-source = "git+https://github.com/nocduro/dhcproto.git#ead5c0b0003933f55abc237e502444e2e9c35894"
+source = "git+https://github.com/nocduro/dhcproto.git?rev=ead5c0b0003933f55abc237e502444e2e9c35894#ead5c0b0003933f55abc237e502444e2e9c35894"
 dependencies = [
  "dhcproto-macros",
  "ipnet",
@@ -200,7 +200,7 @@ dependencies = [
 [[package]]
 name = "dhcproto-macros"
 version = "0.1.0"
-source = "git+https://github.com/nocduro/dhcproto.git#ead5c0b0003933f55abc237e502444e2e9c35894"
+source = "git+https://github.com/nocduro/dhcproto.git?rev=ead5c0b0003933f55abc237e502444e2e9c35894#ead5c0b0003933f55abc237e502444e2e9c35894"
 dependencies = [
  "proc-macro2",
 ]
@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "shadowdhcp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "advmac",
  "arc-swap",

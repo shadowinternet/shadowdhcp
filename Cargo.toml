@@ -1,6 +1,6 @@
 [package]
 name = "shadowdhcp"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -33,7 +33,7 @@ arc-swap = "1.7.1"
 base64 = { version = "0.22", default-features = false, features = ["std"], optional = true }
 compact_str = { version = "0.9.0", features = ["serde"] }
 dashmap = "6.1.0"
-dhcproto = { git = "https://github.com/nocduro/dhcproto.git" }
+dhcproto = { git = "https://github.com/nocduro/dhcproto.git", rev = "ead5c0b0003933f55abc237e502444e2e9c35894" }
 ipnet = { version = "2.5", features = ["serde"] }
 pico-args = "0.5.0"
 serde = { version = "1", features = ["derive"] }

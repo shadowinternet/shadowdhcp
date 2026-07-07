@@ -84,6 +84,7 @@ impl Default for LeaseTimes {
 /// Server wide configuration, used to deserialize the config.json file before
 /// transforming to `Config`
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ServerConfig {
     dns_v4: Vec<Ipv4Addr>,
     dns_v6: Vec<Ipv6Addr>,
@@ -105,6 +106,7 @@ struct ServerConfig {
 
 /// Server IDs stored in separate file that may be auto generated in the future
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ServerIds {
     v4: Ipv4Addr,
     v6: Duid,
@@ -113,6 +115,7 @@ struct ServerIds {
 /// DHCP event sinks. Each sink is enabled by its presence. `queue_size` is
 /// applied independently to each sink's bounded channel.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EventsConfig {
     #[serde(default = "default_events_queue_size")]
     pub queue_size: usize,
@@ -136,6 +139,7 @@ impl Default for EventsConfig {
 
 /// Connection details for the self-hosted ClickHouse server
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClickHouseConfig {
     /// Base URL (e.g. "https://clickhouse.example.com" or "https://host:8443")
     pub url: String,
@@ -167,6 +171,7 @@ fn default_database() -> String {
 
 /// Top-level `logging` block from `config.json`.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ServerLoggingConfig {
     /// Log verbosity. One of: `trace`, `debug`, `info`, `warn`, `error`.
     /// Resolved by the config loader; this field is here so it can sit
@@ -211,6 +216,7 @@ impl TryFrom<ServerLoggingConfig> for LoggingConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileLogConfig {
     pub path: PathBuf,
     #[serde(default = "default_max_files")]

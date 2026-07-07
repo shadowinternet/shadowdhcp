@@ -7,6 +7,7 @@ use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{de::Visitor, Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
 pub struct Reservation {
     // customer WAN v4 address
     pub ipv4: Ipv4Addr,
@@ -29,6 +30,7 @@ pub struct Reservation {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct V4Subnet {
     pub net: Ipv4Net,
     pub gateway: Ipv4Addr,
@@ -63,6 +65,7 @@ impl V4Subnet {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
 pub struct Option82 {
     pub circuit: Option<CompactString>,
     pub remote: Option<CompactString>,
@@ -70,6 +73,7 @@ pub struct Option82 {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
 pub struct Option1837 {
     /// Option 18 Interface-ID field
     pub interface: Option<CompactString>,
