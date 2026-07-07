@@ -1,9 +1,9 @@
-//! Shared batched-flush retry loop used by analytics and logging writer threads.
+//! Shared batched-flush retry loop used by the analytics writer threads.
 //!
 //! Each writer is a `BatchSink<T>`: it buffers items received from a bounded
 //! channel up to a size or latency bound and flushes once per cycle. The `run`
-//! function owns the receive/batch/retry state machine so the three writers
-//! (TCP, ClickHouse events, ClickHouse logs) don't each reimplement it.
+//! function owns the receive/batch/retry state machine so the two writers
+//! (TCP, ClickHouse events) don't each reimplement it.
 //!
 //! Drop policy: the in-flight batch is never grown during retry. The bounded
 //! channel between producers and the sink absorbs events while we retry; a
@@ -12,8 +12,8 @@
 //! disconnecting (all producers dropped their senders) or the process-wide
 //! `Shutdown` flag being signalled — remaining buffered events are flushed
 //! best-effort: each batch gets one attempt, and we exit on the first
-//! failure. The flag path exists for the ClickHouse log sink, whose sender
-//! lives inside the global tracing subscriber and is never dropped.
+//! failure. The flag also interrupts retry sleeps, so SIGTERM isn't delayed
+//! by a wedged downstream.
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

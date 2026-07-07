@@ -42,21 +42,15 @@ Example:
 | `mac_extractors` | Array of strings | `["client_linklayer_address"]` | Methods for extracting MAC addresses from DHCPv6 messages. See [MAC extractors](#mac-extractors). |
 | `v4_lease_time` | Integer (seconds) | `3600` | DHCPv4 lease time. T1 and T2 are derived from this (RFC 2131: T1 = 0.5·lease, T2 = 0.875·lease). |
 | `v6_lease_time` | Integer (seconds) | `12 * v4_lease_time` | DHCPv6 valid lifetime. Preferred/T1/T2 are derived (RFC 8415: preferred = 0.5·valid, T1 = 0.5·preferred, T2 = 0.8·preferred). See [Lease times](#lease-times) for why the v6 default is much longer than v4. |
-| `logging` | Object | If not present, logs to stdout at INFO | Log level and sinks: stdout, rotating file, ClickHouse. See [logging](logging.md). |
-| `clickhouse` | Object | None | ClickHouse connection (URL, credentials, database, hostname). When present, events and logs both ship here by default. See [ClickHouse](#clickhouse). |
-| `events` | Object | `{}` | DHCP event sinks: TCP and/or ClickHouse toggle, plus shared queue sizing. See [events](events.md). |
+| `logging` | Object | If not present, logs to stdout at INFO | Log level and sinks: stdout, rotating file. See [logging](logging.md). |
+| `events` | Object | `{}` | DHCP event sinks: TCP address and/or ClickHouse connection, plus shared queue sizing. See [events](events.md) and [ClickHouse](#clickhouse). |
 | `mgmt_address` | Socket address | None | Address for the management socket. Must be a loopback address (127.0.0.1 or [::1]) — the interface has no authentication. See [management](management.md#security). |
 | `v4_bind_address` | Socket address | `"0.0.0.0:67"` | Address to bind the DHCPv4 server. |
 | `v6_bind_address` | Socket address | `"[::]:547"` | Address to bind the DHCPv6 server. |
 
 ### ClickHouse
 
-The top-level `clickhouse` block holds the connection details. Once present, both subsystems automatically use it as a sink:
-
-- **events** insert into `dhcp.events_v4` / `dhcp.events_v6`
-- **logs** insert into `dhcp.otel_logs` (HyperDX-compatible schema)
-
-Either subsystem can opt out via its own toggle (`events.clickhouse: false` or `logging.clickhouse: false`). If the top-level block is absent, the toggles are no-ops.
+The `events.clickhouse` block holds the connection details; its presence enables the sink. Once present, events insert into `dhcp.events_v4` / `dhcp.events_v6`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -64,7 +58,7 @@ Either subsystem can opt out via its own toggle (`events.clickhouse: false` or `
 | `user` | string | Yes | Writer account username. |
 | `password` | string | Yes | Writer account password. |
 | `database` | string | No | Target database. Default `"dhcp"`. |
-| `hostname` | string | No | Logical hostname written into the `host_name` column on event rows and the `host.name` resource attribute on log rows. Default: contents of `/etc/hostname`. |
+| `hostname` | string | No | Logical hostname written into the `host_name` column on event rows. Default: contents of `/etc/hostname`. |
 
 ### Lease times
 
@@ -157,13 +151,13 @@ Methods for extracting MAC addresses from DHCPv6 messages for reservation matchi
             "max_files": 3
         }
     },
-    "clickhouse": {
-        "url": "https://clickhouse.example.com",
-        "user": "dhcp_writer",
-        "password": "REPLACE_WITH_STRONG_PASSWORD"
-    },
     "events": {
-        "tcp": "127.0.0.1:9000"
+        "tcp": "127.0.0.1:9000",
+        "clickhouse": {
+            "url": "https://clickhouse.example.com",
+            "user": "dhcp_writer",
+            "password": "REPLACE_WITH_STRONG_PASSWORD"
+        }
     },
     "mgmt_address": "127.0.0.1:8547",
     "v4_bind_address": "0.0.0.0:67",

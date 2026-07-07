@@ -23,7 +23,9 @@ use crate::{
         events::{DhcpEvent, DhcpEventV6},
         EventSenders,
     },
-    v6::handlers::DhcpV6Response,
+    types::Duid,
+    v6::extensions::{ShadowMessageExtV6, ShadowRelayMessageExtV6},
+    v6::handlers::{DhcpV6Response, NoResponse},
 };
 
 pub fn v6_worker(
@@ -62,7 +64,7 @@ pub fn v6_worker(
                     // Read-timeout expiry: WouldBlock on Unix, TimedOut on Windows
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => {}
                     io::ErrorKind::ConnectionReset => {
-                        error!("Sent response to host that responded with ICMP unreachable");
+                        debug!("Sent response to host that responded with ICMP unreachable");
                     }
                     io::ErrorKind::Interrupted => {
                         debug!("recv_from interrupted, retrying");
@@ -81,6 +83,12 @@ pub fn v6_worker(
                 continue;
             }
         };
+
+        let relay_addr = match src {
+            SocketAddr::V6(v6) => Some(*v6.ip()),
+            SocketAddr::V4(_) => None,
+        };
+
         match v6::RelayMessage::from_bytes(&read_buf[..amount]) {
             Ok(msg) => {
                 trace!("RelayMessage: {:#?}", msg);
@@ -89,11 +97,23 @@ pub fn v6_worker(
                     DhcpOption::RelayMsg(msg) => Some(msg),
                     _ => None,
                 }) {
-                    Some(msg) => match msg {
-                        v6::RelayMessageData::Message(m) => m,
-                        v6::RelayMessageData::Relay(_rm) => continue,
-                    },
-                    None => continue,
+                    Some(v6::RelayMessageData::Message(m)) => m,
+                    Some(v6::RelayMessageData::Relay(_rm)) => {
+                        debug!("Ignoring nested relay message from {src}");
+                        if let (Some(sinks), Some(relay_addr)) = (&event_channel, relay_addr) {
+                            let event = DhcpEventV6::relay_failed(&msg, relay_addr, "NestedRelay");
+                            sinks.send(DhcpEvent::V6(event));
+                        }
+                        continue;
+                    }
+                    None => {
+                        debug!("Relay message from {src} carries no RelayMsg option");
+                        if let (Some(sinks), Some(relay_addr)) = (&event_channel, relay_addr) {
+                            let event = DhcpEventV6::relay_failed(&msg, relay_addr, "NoRelayMsg");
+                            sinks.send(DhcpEvent::V6(event));
+                        }
+                        continue;
+                    }
                 };
 
                 match crate::v6::handlers::handle_message(
@@ -104,18 +124,37 @@ pub fn v6_worker(
                     &msg,
                 ) {
                     DhcpV6Response::NoResponse(reason) => {
-                        debug!("Not responding {:?}", reason);
-                        if let Some(ref sinks) = event_channel {
-                            let relay_addr = match src {
-                                SocketAddr::V6(v6) => *v6.ip(),
-                                SocketAddr::V4(_) => continue, // DHCPv6 requires IPv6
-                            };
+                        if !matches!(reason, NoResponse::NoReservation) {
+                            debug!("Not responding {:?}", reason);
+                        } else if tracing::enabled!(tracing::Level::INFO) {
+                            let duid = inner_msg
+                                .client_id()
+                                .and_then(|b| Duid::new(b.to_vec()))
+                                .map(|d| d.to_string());
+                            let mac = msg.hw_addr().map(|m| m.to_string());
+                            let option1837 = msg.option1837();
+                            let interface_id =
+                                option1837.as_ref().and_then(|o| o.interface.as_deref());
+                            let remote_id = option1837.as_ref().and_then(|o| o.remote.as_deref());
+                            info!(
+                                duid = duid.as_deref(),
+                                mac = mac.as_deref(),
+                                interface_id,
+                                remote_id,
+                                relay = %src,
+                                xid = ?inner_msg.xid(),
+                                "DHCPv6: no reservation found — not responding"
+                            );
+                        }
+                        if let (Some(sinks), Some(relay_addr)) = (&event_channel, relay_addr) {
                             let event =
                                 DhcpEventV6::failed(inner_msg, &msg, relay_addr, reason.as_str());
                             sinks.send(DhcpEvent::V6(event));
                         }
                     }
                     DhcpV6Response::Message(resp) => {
+                        // Capture before resp.message moves into the relay wrapper.
+                        let reply_type = resp.message.msg_type();
                         // wrap the message in a RelayRepl
                         let mut relay_reply_opts = DhcpOptions::new();
                         relay_reply_opts.insert(DhcpOption::RelayMsg(
@@ -143,17 +182,55 @@ pub fn v6_worker(
                             Ok(buf) => buf,
                             Err(e) => {
                                 error!("Failed to encode DHCPv6 response: {e}");
+                                if let (Some(sinks), Some(relay_addr)) =
+                                    (&event_channel, relay_addr)
+                                {
+                                    let event = DhcpEventV6::send_failed(
+                                        inner_msg,
+                                        &msg,
+                                        relay_addr,
+                                        resp.reservation.as_deref(),
+                                        resp.reservation_match,
+                                        "EncodeFailed",
+                                    );
+                                    sinks.send(DhcpEvent::V6(event));
+                                }
                                 continue;
                             }
                         };
                         match socket.send_to(&write_buf, src) {
                             Ok(sent) => {
                                 debug!("responded to {src} with {sent} bytes");
-                                if let Some(ref sinks) = event_channel {
-                                    let relay_addr = match src {
-                                        SocketAddr::V6(v6) => *v6.ip(),
-                                        SocketAddr::V4(_) => continue, // DHCPv6 requires IPv6
-                                    };
+                                if tracing::enabled!(tracing::Level::INFO) {
+                                    let duid = inner_msg
+                                        .client_id()
+                                        .and_then(|b| Duid::new(b.to_vec()))
+                                        .map(|d| d.to_string());
+                                    let mac = msg.hw_addr().map(|m| m.to_string());
+                                    match resp.reservation.as_deref() {
+                                        Some(reservation) => info!(
+                                            message_type = ?reply_type,
+                                            mac = mac.as_deref(),
+                                            duid = duid.as_deref(),
+                                            na = %reservation.ipv6_na,
+                                            pd = %reservation.ipv6_pd,
+                                            method = resp.reservation_match.map(|m| m.method),
+                                            relay = %src,
+                                            xid = ?inner_msg.xid(),
+                                            "DHCPv6 lease granted"
+                                        ),
+                                        None => info!(
+                                            mac = mac.as_deref(),
+                                            duid = duid.as_deref(),
+                                            relay = %src,
+                                            xid = ?inner_msg.xid(),
+                                            "DHCPv6 Reply sent with NoBinding — no reservation for renewing client"
+                                        ),
+                                    }
+                                }
+                                if let (Some(sinks), Some(relay_addr)) =
+                                    (&event_channel, relay_addr)
+                                {
                                     let event = DhcpEventV6::success(
                                         inner_msg,
                                         &msg,
@@ -164,13 +241,31 @@ pub fn v6_worker(
                                     sinks.send(DhcpEvent::V6(event));
                                 }
                             }
-                            Err(e) => error!("Problem sending response message: {e}"),
+                            Err(e) => {
+                                error!("Problem sending response message: {e}");
+                                if let (Some(sinks), Some(relay_addr)) =
+                                    (&event_channel, relay_addr)
+                                {
+                                    let event = DhcpEventV6::send_failed(
+                                        inner_msg,
+                                        &msg,
+                                        relay_addr,
+                                        resp.reservation.as_deref(),
+                                        resp.reservation_match,
+                                        "SendFailed",
+                                    );
+                                    sinks.send(DhcpEvent::V6(event));
+                                }
+                            }
                         }
                     }
                 }
             }
             Err(e) => {
                 error!("Unable to parse dhcp message {}", e);
+                if let (Some(sinks), Some(relay_addr)) = (&event_channel, relay_addr) {
+                    sinks.send(DhcpEvent::V6(DhcpEventV6::parse_error(relay_addr)));
+                }
             }
         };
     }

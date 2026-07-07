@@ -7,9 +7,11 @@ use std::time::Duration;
 use tracing::{info, warn};
 use ureq::Agent;
 
+use crate::analytics::batch::{run, BatchConfig, BatchSink};
+use crate::analytics::clickhouse_http::{
+    basic_auth_header, build_agent, post, read_hostname, PostOutcome,
+};
 use crate::analytics::events::{DhcpEvent, DhcpEventV6};
-use crate::batch::{run, BatchConfig, BatchSink};
-use crate::clickhouse_http::{basic_auth_header, build_agent, post, read_hostname, PostOutcome};
 use crate::config::ClickHouseConfig;
 use crate::shutdown::Shutdown;
 

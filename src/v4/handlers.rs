@@ -1,7 +1,7 @@
 use advmac::MacAddr6;
 use dhcproto::v4::{self, DhcpOption, Flags};
 use std::{net::Ipv4Addr, sync::Arc};
-use tracing::{debug, error, field, info, instrument, warn, Span};
+use tracing::{debug, warn};
 
 use crate::types::Reservation;
 
@@ -109,8 +109,6 @@ pub fn handle_message(
 /// TODO: client renew
 ///
 /// <https://datatracker.ietf.org/doc/html/rfc2131#section-4.3.1>
-#[instrument(skip(reservations, config, msg),
-fields(mac = field::Empty, xid = %msg.xid()))]
 fn handle_discover(
     reservations: &ReservationDb,
     config: &Config,
@@ -120,8 +118,6 @@ fn handle_discover(
         Some(ma) => ma,
         None => return DhcpV4Response::NoResponse(NoResponse::NoValidMac),
     };
-    Span::current().record("mac", field::display(mac_addr));
-    info!("DHCPDiscover");
 
     let (reservation, match_info) = match find_reservation(
         reservations,
@@ -129,14 +125,8 @@ fn handle_discover(
         mac_addr,
         msg.relay_agent_information(),
     ) {
-        Some((res, match_info)) => {
-            info!(ipv4 = %res.ipv4, method = match_info.method, "Found reservation");
-            (res, match_info)
-        }
-        None => {
-            info!("No reservation found");
-            return DhcpV4Response::NoResponse(NoResponse::NoReservation);
-        }
+        Some((res, match_info)) => (res, match_info),
+        None => return DhcpV4Response::NoResponse(NoResponse::NoReservation),
     };
 
     let (gateway, subnet_mask) = match config
@@ -147,7 +137,7 @@ fn handle_discover(
     {
         Some((gw, subnet)) => (gw, subnet),
         None => {
-            error!("Couldn't find configured subnet for {}", &reservation.ipv4);
+            warn!(mac = %mac_addr, "Couldn't find configured subnet for {}", &reservation.ipv4);
             return DhcpV4Response::NoResponse(NoResponse::NoServerSubnet);
         }
     };
@@ -188,8 +178,6 @@ fn handle_discover(
 /// address after, e.g., system reboot, or (c) extending the lease on a particular network address
 ///
 /// <https://datatracker.ietf.org/doc/html/rfc2131#section-4.3.2>
-#[instrument(skip(reservations, config, msg, leases),
-fields(mac = field::Empty, xid = %msg.xid()))]
 fn handle_request(
     reservations: &ReservationDb,
     leases: &Opt82Cache,
@@ -219,8 +207,6 @@ fn handle_request(
         Some(ma) => ma,
         None => return DhcpV4Response::NoResponse(NoResponse::NoValidMac),
     };
-    Span::current().record("mac", field::display(mac_addr));
-    info!("DHCPRequest");
 
     let (reservation, match_info) = match find_reservation(
         reservations,
@@ -228,14 +214,8 @@ fn handle_request(
         mac_addr,
         msg.relay_agent_information(),
     ) {
-        Some((res, match_info)) => {
-            info!(ipv4 = %res.ipv4, method = match_info.method, "Found reservation");
-            (res, match_info)
-        }
-        None => {
-            info!("No reservation found");
-            return DhcpV4Response::NoResponse(NoResponse::NoReservation);
-        }
+        Some((res, match_info)) => (res, match_info),
+        None => return DhcpV4Response::NoResponse(NoResponse::NoReservation),
     };
 
     let (gateway, subnet_mask) = match config
@@ -246,7 +226,7 @@ fn handle_request(
     {
         Some((gw, subnet)) => (gw, subnet),
         None => {
-            warn!("Couldn't find configured subnet for {}", &reservation.ipv4);
+            warn!(mac = %mac_addr, "Couldn't find configured subnet for {}", &reservation.ipv4);
             return DhcpV4Response::NoResponse(NoResponse::NoServerSubnet);
         }
     };
@@ -271,7 +251,7 @@ fn handle_request(
         (Some(server_id), &Ipv4Addr::UNSPECIFIED, Some(requested_ip)) => {
             debug!("variant: selecting");
             if server_id != &config.v4_server_id {
-                info!(%server_id, "SELECTING server id did not match");
+                debug!(%server_id, "SELECTING server id did not match");
                 return DhcpV4Response::NoResponse(NoResponse::WrongServerId);
             }
             requested_ip
@@ -289,7 +269,7 @@ fn handle_request(
             ciaddr
         }
         _ => {
-            info!("Unrecognized DHCPREQUEST variant");
+            debug!("Unrecognized DHCPREQUEST variant");
             return DhcpV4Response::NoResponse(NoResponse::Discarded);
         }
     };
@@ -315,7 +295,7 @@ fn handle_request(
             leases.insert_mac_option82_binding(&mac_addr, opt);
         }
     } else {
-        warn!(reservation_ipv4 = %reservation.ipv4, %client_requested_ip,
+        warn!(mac = %mac_addr, reservation_ipv4 = %reservation.ipv4, %client_requested_ip,
             "client requested ip doesn't match reserved address, sending DHCPNAK",
         );
         // RFC 2131 Table 3: yiaddr in DHCPNAK MUST be 0

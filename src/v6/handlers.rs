@@ -9,12 +9,9 @@ use crate::analytics::events::ReservationMatch;
 use crate::config::Config;
 use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
-use tracing::{debug, field, info, instrument, Span};
+use tracing::debug;
 
-use crate::v6::{
-    extensions::{ShadowMessageExtV6, ShadowRelayMessageExtV6},
-    reservation::find_reservation,
-};
+use crate::v6::{extensions::ShadowMessageExtV6, reservation::find_reservation};
 
 /// A DHCPv6 response message produced by the server.
 ///
@@ -60,8 +57,6 @@ pub enum DhcpV6Response {
     NoResponse(NoResponse),
 }
 
-#[instrument(skip(config, reservations, leases, msg, relay_msg),
-fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_solicit(
     config: &Config,
     reservations: &ReservationDb,
@@ -79,11 +74,8 @@ fn handle_solicit(
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
 
-    Span::current().record("client_id", field::display(&client_id));
-    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
-
     if msg.server_id().is_some() {
-        info!("Client included a server_id field, ignoring");
+        debug!("Client included a server_id field, ignoring");
         return DhcpV6Response::NoResponse(NoResponse::UnexpectedServerId);
     }
 
@@ -171,15 +163,10 @@ fn handle_solicit(
                 reservation_match: Some(match_info),
             })
         }
-        None => {
-            info!("Solicit request with no reservation for DUID");
-            DhcpV6Response::NoResponse(NoResponse::NoReservation)
-        }
+        None => DhcpV6Response::NoResponse(NoResponse::NoReservation),
     }
 }
 
-#[instrument(skip(config, reservations, leases, msg, relay_msg),
-fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_renew(
     config: &Config,
     reservations: &ReservationDb,
@@ -198,8 +185,6 @@ fn handle_renew(
         },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
-    Span::current().record("client_id", field::display(&client_id));
-    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     // message MUST include ServerIdentifier option AND match this Server's identity
     match msg.server_id() {
@@ -321,8 +306,6 @@ fn handle_renew(
     })
 }
 
-#[instrument(skip(config, reservations, leases, msg, relay_msg),
-fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_request(
     config: &Config,
     reservations: &ReservationDb,
@@ -341,8 +324,6 @@ fn handle_request(
         },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
-    Span::current().record("client_id", field::display(&client_id));
-    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     // message MUST include ServerIdentifier option AND match this Server's identity
     match msg.server_id() {
@@ -423,8 +404,6 @@ fn handle_request(
 ///
 /// Rebind is similar to Renew, but the client sends it to any available server
 /// (not specifically to the server that originally assigned the lease).
-#[instrument(skip(config, reservations, leases, msg, relay_msg),
-fields(client_id = field::Empty, xid = ?msg.xid()))]
 fn handle_rebind(
     config: &Config,
     reservations: &ReservationDb,
@@ -440,8 +419,6 @@ fn handle_rebind(
         },
         None => return DhcpV6Response::NoResponse(NoResponse::NoClientId),
     };
-    Span::current().record("client_id", field::display(&client_id));
-    relay_msg.hw_addr().inspect(|hw| info!("hw_addr: {:?}", hw));
 
     // RFC 8415 Section 18.4.5: Rebind messages should NOT contain a Server Identifier
     // If present, we can still process it but it's unusual

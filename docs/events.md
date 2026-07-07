@@ -7,17 +7,17 @@ shadowdhcp can emit JSON events for every DHCP request, enabling analytics, moni
 
 ## Enabling events
 
-Event sinks live in the top-level `events` block. ClickHouse connection details live in the top-level `clickhouse` block (shared with the logging subsystem). When that block is present, events automatically ship to ClickHouse unless `events.clickhouse: false` is set; the TCP sink is enabled by setting `events.tcp`:
+Event sinks live in the `events` block, and each sink is enabled by its presence: `events.tcp` holds the TCP collector address, `events.clickhouse` holds the ClickHouse connection details:
 
 ```json
 {
-    "clickhouse": {
-        "url": "https://clickhouse.example.com",
-        "user": "dhcp_writer",
-        "password": "changeme"
-    },
     "events": {
-        "tcp": "127.0.0.1:9000"
+        "tcp": "127.0.0.1:9000",
+        "clickhouse": {
+            "url": "https://clickhouse.example.com",
+            "user": "dhcp_writer",
+            "password": "changeme"
+        }
     }
 }
 ```
@@ -95,7 +95,7 @@ No reservation found:
 | `match_method` | How the reservation was found: `mac` or `option82`. |
 | `extractor_used` | Which extractor matched (e.g., `chaddr`, `remote_only`). |
 | `success` | Whether a reservation was found and response sent. |
-| `failure_reason` | Reason for failure: `NoReservation`, `InvalidSubnet`, etc. |
+| `failure_reason` | Reason for failure: `NoReservation`, `NoServerSubnet`, etc. Worker-level failures also land here: `ParseError` (undecodable datagram — `message_type` and `mac_address` are null, only `relay_addr` is known), `EncodeFailed`/`SendFailed` (a response was built but never reached the wire — reservation fields are still populated). |
 
 ### DHCPv6 event
 
@@ -177,7 +177,7 @@ No reservation found:
 | `match_method` | How the reservation was found: `mac`, `duid`, `option82`, or `option1837`. |
 | `extractor_used` | Which extractor matched (e.g., `client_linklayer_address`, `remote_only`). |
 | `success` | Whether a reservation was found and response sent. |
-| `failure_reason` | Reason for failure: `NoReservation`, `NoClientId`, etc. |
+| `failure_reason` | Reason for failure: `NoReservation`, `NoClientId`, etc. Worker-level failures also land here: `ParseError` (undecodable datagram — non-nullable columns take sentinels: `message_type` = `Unknown`, empty `xid`, `::` relay link/peer), `NoRelayMsg`/`NestedRelay` (relay wrapper without a usable inner message — relay fields and MAC are populated from the wrapper), `EncodeFailed`/`SendFailed` (a response was built but never reached the wire — reservation fields are still populated). |
 
 ## Event delivery
 
@@ -212,7 +212,6 @@ clickhouse-client --password --multiquery < clickhouse_schema.sql
 This creates:
 - `dhcp.events_v4` - DHCPv4 events table
 - `dhcp.events_v6` - DHCPv6 events table
-- `dhcp.otel_logs` - log table (ClickStack-compatible) — see [logging](logging.md)
 - Materialized views for common aggregations (frequent clients, relay statistics)
 
 Read the comment in `clickhouse_schema.sql` for details on creating a user that only has permission to write to the DHCP tables.
@@ -223,10 +222,12 @@ The ClickHouse table column layout closely mirrors the TCP JSON shape shown abov
 
 ```json
 {
-    "clickhouse": {
-        "url": "https://clickhouse.example.com",
-        "user": "dhcp_writer",
-        "password": "REPLACE_WITH_STRONG_PASSWORD"
+    "events": {
+        "clickhouse": {
+            "url": "https://clickhouse.example.com",
+            "user": "dhcp_writer",
+            "password": "REPLACE_WITH_STRONG_PASSWORD"
+        }
     }
 }
 ```

@@ -17,9 +17,6 @@ use crate::v4::extractors;
 use crate::{analytics::events::DhcpEvent, types::Reservation};
 
 mod analytics;
-mod batch;
-#[cfg(feature = "clickhouse")]
-mod clickhouse_http;
 mod config;
 mod logging;
 mod mgmt;
@@ -92,14 +89,8 @@ fn main() {
             std::process::exit(1);
         }
     };
-    // ClickHouse log writer (when enabled) returned here so we can spawn it
-    // inside `thread::scope` and join on shutdown alongside the events writer.
     // The guards flush buffered file logs when they drop at the end of main.
-    let (log_writer, _log_guards) = logging::init(
-        &config.logging,
-        config.clickhouse.as_ref(),
-        shutdown.clone(),
-    );
+    let _log_guards = logging::init(&config.logging);
     let config = Arc::new(ArcSwap::from_pointee(config));
 
     let reservations_path = config_dir.join("reservations.json");
@@ -133,11 +124,14 @@ fn main() {
     let events_queue_size = loaded_config.events.queue_size;
 
     #[cfg(feature = "clickhouse")]
-    let clickhouse_config = if loaded_config.events.clickhouse.unwrap_or(true) {
-        loaded_config.clickhouse.clone()
-    } else {
-        None
-    };
+    let clickhouse_config = loaded_config.events.clickhouse.clone();
+    #[cfg(not(feature = "clickhouse"))]
+    if loaded_config.events.clickhouse.is_some() {
+        tracing::warn!(
+            "events.clickhouse is configured but this binary was built without the \
+             `clickhouse` feature; events will not be shipped to ClickHouse"
+        );
+    }
     drop(loaded_config);
 
     let mut senders = EventSenders::new();
@@ -261,13 +255,6 @@ fn main() {
                 })
                 .expect("events-ch spawn");
         }
-
-        if let Some(task) = log_writer {
-            thread::Builder::new()
-                .name("ch-logs".to_string())
-                .spawn_scoped(s, task)
-                .expect("ch-logs spawn");
-        }
     });
 
     tracing::info!("shutdown complete");
@@ -349,13 +336,13 @@ config.json:
     "logging": {
         "level": "info"
     },
-    "clickhouse": {
-        "url": "https://clickhouse.example.com",
-        "user": "dhcp_writer",
-        "password": "changeme"
-    },
     "events": {
-        "tcp": "127.0.0.1:9000"
+        "tcp": "127.0.0.1:9000",
+        "clickhouse": {
+            "url": "https://clickhouse.example.com",
+            "user": "dhcp_writer",
+            "password": "changeme"
+        }
     },
     "mgmt_address": "127.0.0.1:8547"
 }
@@ -370,19 +357,14 @@ Optional fields:
       level      - One of [trace, debug, info, warn, error] (default: info)
       stdout     - Write to stdout (default: true if logging block present)
       file       - { path, max_files } for in-process rotating file sink
-      clickhouse - Toggle: ship logs to dhcp.otel_logs in ClickHouse via the
-                   top-level `clickhouse` block (default: true when that block
-                   is present)
-  - clickhouse: ClickHouse connection (HTTPS). Required: url, user, password.
-                Optional: database (default "dhcp"), hostname (default: read from /etc/hostname).
-                Enabled by the "clickhouse" cargo feature (on by default). When
-                present, both events and logs are shipped here unless their
-                respective toggles are set to false.
-  - events: Event sink block. Fields:
+  - events: Event sink block. Each sink is enabled by its presence. Fields:
       queue_size - Per-sink in-memory queue capacity (default: 16384)
       tcp        - Address:port for analytics events over TCP (JSON lines)
-      clickhouse - Toggle: insert events into dhcp.events_v4 / dhcp.events_v6
-                   (default: true when the top-level clickhouse block is set)
+      clickhouse - ClickHouse connection (HTTPS) for inserts into
+                   dhcp.events_v4 / dhcp.events_v6. Required: url, user,
+                   password. Optional: database (default "dhcp"), hostname
+                   (default: read from /etc/hostname). Needs the "clickhouse"
+                   cargo feature (on by default).
   - mgmt_address: Address:port for management interface (reload/replace
                   reservations). Must be a loopback address; the interface
                   has no authentication, so any local process can use it.

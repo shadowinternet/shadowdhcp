@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use advmac::MacAddr6;
 use dashmap::DashMap;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::reservationdb::ReservationDb;
 use crate::types::Option82;
@@ -34,13 +34,13 @@ impl Opt82Cache {
             .entry(*mac)
             .and_modify(|entry| {
                 if entry.opt82 != *opt {
-                    info!(%mac, old = ?entry.opt82, new = ?opt, "updated mac -> option82 binding");
+                    debug!(%mac, old = ?entry.opt82, new = ?opt, "updated mac -> option82 binding");
                     entry.opt82 = opt.clone();
                 }
                 entry.last_seen = Instant::now();
             })
             .or_insert_with(|| {
-                info!(%mac, option82 = ?opt, "added mac -> option82 binding");
+                debug!(%mac, option82 = ?opt, "added mac -> option82 binding");
                 Opt82Entry {
                     opt82: opt.clone(),
                     last_seen: Instant::now(),

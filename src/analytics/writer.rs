@@ -1,5 +1,5 @@
+use crate::analytics::batch::{run, BatchConfig, BatchSink};
 use crate::analytics::events::DhcpEvent;
-use crate::batch::{run, BatchConfig, BatchSink};
 use crate::shutdown::Shutdown;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;

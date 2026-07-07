@@ -24,7 +24,6 @@ pub struct Config {
     pub lease_times: LeaseTimes,
     pub logging: LoggingConfig,
     pub events: EventsConfig,
-    pub clickhouse: Option<ClickHouseConfig>,
     pub mgmt_address: Option<SocketAddr>,
     pub v4_bind_address: SocketAddrV4,
     pub v6_bind_address: SocketAddrV6,
@@ -99,7 +98,6 @@ struct ServerConfig {
     logging: Option<ServerLoggingConfig>,
     #[serde(default)]
     events: EventsConfig,
-    clickhouse: Option<ClickHouseConfig>,
     mgmt_address: Option<SocketAddr>,
     v4_bind_address: Option<SocketAddrV4>,
     v6_bind_address: Option<SocketAddrV6>,
@@ -112,18 +110,14 @@ struct ServerIds {
     v6: Duid,
 }
 
-/// DHCP event sinks. Each sink is enabled by its presence (TCP) or by an
-/// explicit toggle (ClickHouse, defaults to true when the top-level
-/// `clickhouse` block is set). `queue_size` is applied independently to each
-/// sink's bounded channel.
+/// DHCP event sinks. Each sink is enabled by its presence. `queue_size` is
+/// applied independently to each sink's bounded channel.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EventsConfig {
     #[serde(default = "default_events_queue_size")]
     pub queue_size: usize,
     pub tcp: Option<SocketAddr>,
-    /// Toggle: send events to ClickHouse. Defaults to true when the top-level
-    /// `clickhouse` block is present. Set to false to disable.
-    pub clickhouse: Option<bool>,
+    pub clickhouse: Option<ClickHouseConfig>,
 }
 
 fn default_events_queue_size() -> usize {
@@ -150,9 +144,7 @@ pub struct ClickHouseConfig {
     /// Database name, defaults to "dhcp"
     #[serde(default = "default_database")]
     pub database: String,
-    /// Value used both for the `host_name` column on event rows and for the
-    /// `host.name` resource attribute on log rows. If unset, reads from
-    /// `/etc/hostname` at startup (empty string on platforms without one).
+    /// Override the systems hostname when sending events
     #[serde(default)]
     pub hostname: Option<String>,
 }
@@ -182,21 +174,12 @@ struct ServerLoggingConfig {
     pub level: Option<String>,
     pub stdout: Option<bool>,
     pub file: Option<FileLogConfig>,
-    /// Toggle: send logs to ClickHouse via the top-level `clickhouse` block.
-    /// Defaults to true when that block is present. Set to false to disable.
-    pub clickhouse: Option<bool>,
-    /// In-memory queue capacity for the ClickHouse log sink. Records over the
-    /// limit are dropped instead of back-pressuring the request path. Default
-    /// 16384.
-    pub queue_size: Option<usize>,
 }
 
 pub struct LoggingConfig {
     pub level: tracing::Level,
     pub stdout: bool,
     pub file: Option<FileLogConfig>,
-    pub clickhouse: bool,
-    pub queue_size: usize,
 }
 
 impl Default for LoggingConfig {
@@ -205,8 +188,6 @@ impl Default for LoggingConfig {
             level: tracing::Level::INFO,
             stdout: true,
             file: None,
-            clickhouse: true,
-            queue_size: 16384,
         }
     }
 }
@@ -225,8 +206,6 @@ impl TryFrom<ServerLoggingConfig> for LoggingConfig {
             level,
             stdout: c.stdout.unwrap_or(true),
             file: c.file,
-            clickhouse: c.clickhouse.unwrap_or(true),
-            queue_size: c.queue_size.unwrap_or(16384),
         })
     }
 }
@@ -358,7 +337,6 @@ impl Default for Config {
             lease_times: LeaseTimes::default(),
             logging: LoggingConfig::default(),
             events: EventsConfig::default(),
-            clickhouse: None,
             mgmt_address: None,
             v4_bind_address: "0.0.0.0:67".parse().unwrap(),
             v6_bind_address: "[::]:547".parse().unwrap(),
@@ -432,23 +410,6 @@ impl Config {
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| vec![MacExtractor::ClientLinklayerAddress]);
 
-        // Warn if a subsystem explicitly requested ClickHouse but no top-level
-        // clickhouse block is present
-        if server_config.clickhouse.is_none() {
-            if server_config.events.clickhouse == Some(true) {
-                eprintln!(
-                    "warning: events.clickhouse=true but no top-level `clickhouse` block; ignoring."
-                );
-            }
-            if let Some(l) = server_config.logging.as_ref() {
-                if l.clickhouse == Some(true) {
-                    eprintln!(
-                        "warning: logging.clickhouse=true but no top-level `clickhouse` block; ignoring."
-                    );
-                }
-            }
-        }
-
         let logging = server_config
             .logging
             .map(LoggingConfig::try_from)
@@ -473,7 +434,6 @@ impl Config {
             lease_times,
             logging,
             events: server_config.events,
-            clickhouse: server_config.clickhouse,
             mgmt_address: server_config.mgmt_address,
             v4_bind_address: server_config
                 .v4_bind_address

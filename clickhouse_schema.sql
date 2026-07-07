@@ -265,71 +265,9 @@ GROUP BY host_name, relay_addr, message_type, date;
 -- Request count per server
 -- SELECT host_name, sum(request_count) as total FROM dhcp.relay_stats_v4_mv GROUP BY host_name;
 
--- =============================================================================
--- HyperDX/ClickStack-compatible logs table
--- =============================================================================
-
--- Schema mirrors the layout the HyperDX UI v2 expects when you create a Source
--- pointing at this table. shadowdhcp inserts directly via JSONEachRow over
--- HTTPS, no OTel collector needed. To use the HyperDX UI, point a Logs Source
--- at `dhcp.otel_logs` and the columns map automatically.
---
--- Reference: https://clickhouse.com/docs/use-cases/observability/clickstack/ingesting-data/schemas
-CREATE TABLE IF NOT EXISTS dhcp.otel_logs
-(
-    Timestamp DateTime64(9),
-    TimestampTime DateTime DEFAULT toDateTime(Timestamp),
-
-    -- Trace context. shadowdhcp does not emit traces, so these are empty.
-    TraceId String,
-    SpanId String,
-    TraceFlags UInt8,
-
-    -- Severity (OTLP spec: TRACE=1, DEBUG=5, INFO=9, WARN=13, ERROR=17)
-    SeverityText LowCardinality(String),
-    SeverityNumber UInt8,
-
-    -- Service identification
-    ServiceName LowCardinality(String),
-    Body String,
-
-    -- Resource attributes carry host.name and service.name; log attributes
-    -- carry per-event fields like target plus the enclosing span's
-    -- #[instrument] fields (mac, xid, client_id, ...).
-    ResourceSchemaUrl String,
-    ResourceAttributes Map(LowCardinality(String), String),
-    ScopeSchemaUrl String,
-    ScopeName String,
-    ScopeVersion String,
-    ScopeAttributes Map(LowCardinality(String), String),
-    LogAttributes Map(LowCardinality(String), String),
-
-    INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1,
-    INDEX idx_res_attr_key mapKeys(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
-    INDEX idx_res_attr_value mapValues(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
-    INDEX idx_log_attr_key mapKeys(LogAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
-    INDEX idx_log_attr_value mapValues(LogAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
-    INDEX idx_body Body TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1
-)
-ENGINE = MergeTree
-PARTITION BY toDate(TimestampTime)
-ORDER BY (ServiceName, TimestampTime, Timestamp)
-TTL TimestampTime + INTERVAL 30 DAY
-SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
-
--- Example queries for otel_logs:
-
--- Recent errors
--- SELECT Timestamp, Body, LogAttributes FROM dhcp.otel_logs WHERE SeverityText = 'ERROR' ORDER BY Timestamp DESC LIMIT 100;
-
--- Logs by source module (the `target` log attribute is the Rust module path)
--- SELECT Timestamp, Body FROM dhcp.otel_logs WHERE LogAttributes['target'] LIKE 'shadowdhcp::v6%' ORDER BY Timestamp DESC LIMIT 50;
-
--- Logs for a particular MAC (set as a span field via #[instrument])
--- SELECT Timestamp, Body FROM dhcp.otel_logs WHERE LogAttributes['mac'] = '00-11-22-33-44-55' ORDER BY Timestamp DESC LIMIT 100;
-
--- Logs from a specific host
--- SELECT Timestamp, SeverityText, Body FROM dhcp.otel_logs WHERE ResourceAttributes['host.name'] = 'dhcp-sea-01' ORDER BY Timestamp DESC LIMIT 100;
-
--- Severity histogram, last hour
--- SELECT SeverityText, count() FROM dhcp.otel_logs WHERE Timestamp > now() - INTERVAL 1 HOUR GROUP BY SeverityText ORDER BY 2 DESC;
+-- Malformed or undeliverable traffic per relay (failure_reason values:
+-- 'ParseError' = undecodable datagram; 'NoRelayMsg'/'NestedRelay' = v6 relay
+-- wrapper without a usable inner message; 'EncodeFailed'/'SendFailed' = a
+-- response was built but never reached the wire)
+-- SELECT relay_addr, failure_reason, count() as total FROM dhcp.events_v4 WHERE failure_reason IN ('ParseError', 'EncodeFailed', 'SendFailed') GROUP BY relay_addr, failure_reason;
+-- SELECT relay_addr, failure_reason, count() as total FROM dhcp.events_v6 WHERE failure_reason IN ('ParseError', 'NoRelayMsg', 'NestedRelay', 'EncodeFailed', 'SendFailed') GROUP BY relay_addr, failure_reason;

@@ -2,7 +2,7 @@ use std::{collections::HashMap, str::FromStr};
 
 use advmac::MacAddr6;
 use compact_str::ToCompactString;
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::types::Option82;
 
@@ -71,7 +71,7 @@ pub fn remote_first_12(opt: &Option82) -> Option<Option82> {
 
     match mac {
         Some(mac) => {
-            info!(%mac, "Extracted MAC with remote_first_12 extractor");
+            debug!(%mac, "Extracted MAC with remote_first_12 extractor");
             Some(Option82 {
                 circuit: None,
                 remote: Some(mac.to_compact_string()),
@@ -91,7 +91,7 @@ pub fn normalize_remote_mac(opt: &Option82) -> Option<Option82> {
 
     match mac {
         Some(mac) => {
-            info!(%mac, "Normalized remote MAC");
+            debug!(%mac, "Normalized remote MAC");
             Some(Option82 {
                 circuit: None,
                 remote: Some(mac.to_compact_string()),

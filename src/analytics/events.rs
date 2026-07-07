@@ -179,6 +179,46 @@ impl DhcpEventV4 {
             failure_reason: Some(reason),
         }
     }
+
+    /// Datagram arrived but could not be decoded. All we know is who relayed
+    /// it and when; `message_type`/`mac_address` are nullable in the schema
+    /// for this case.
+    pub fn parse_error(relay_addr: Ipv4Addr) -> Self {
+        Self {
+            timestamp: now(),
+            message_type: None,
+            relay_addr,
+            mac_address: None,
+            option82_circuit: None,
+            option82_remote: None,
+            option82_subscriber: None,
+            reservation_ipv4: None,
+            reservation_mac: None,
+            reservation_option82_circuit: None,
+            reservation_option82_remote: None,
+            reservation_option82_subscriber: None,
+            match_method: None,
+            extractor_used: None,
+            success: false,
+            failure_reason: Some("ParseError"),
+        }
+    }
+
+    /// A response was built but never reached the wire (encode or send
+    /// failure). Keeps the reservation/match data so the transaction stays
+    /// queryable by subscriber.
+    pub fn send_failed(
+        msg: &v4::Message,
+        relay_addr: Ipv4Addr,
+        reservation: Option<&Reservation>,
+        reservation_match: Option<ReservationMatch>,
+        reason: &'static str,
+    ) -> Self {
+        let mut event = Self::success(msg, relay_addr, reservation, reservation_match);
+        event.success = false;
+        event.failure_reason = Some(reason);
+        event
+    }
 }
 
 /// DHCPv6 event for analytics
@@ -354,6 +394,101 @@ impl DhcpEventV6 {
             success: false,
             failure_reason: Some(reason),
         }
+    }
+
+    /// Datagram arrived but could not be decoded as a relay message. All we
+    /// know is who relayed it and when; the non-nullable columns take
+    /// sentinels (`Unknown`, empty xid, `::`).
+    pub fn parse_error(relay_addr: Ipv6Addr) -> Self {
+        Self {
+            timestamp: now(),
+            message_type: "Unknown",
+            xid: String::new(),
+            relay_addr,
+            relay_link_addr: Ipv6Addr::UNSPECIFIED,
+            relay_peer_addr: Ipv6Addr::UNSPECIFIED,
+            mac_address: None,
+            client_id: None,
+            option1837_interface: None,
+            option1837_remote: None,
+            requested_ipv6_na: None,
+            requested_ipv6_pd: None,
+            reservation_ipv6_na: None,
+            reservation_ipv6_pd: None,
+            reservation_ipv4: None,
+            reservation_mac: None,
+            reservation_duid: None,
+            reservation_option1837_interface: None,
+            reservation_option1837_remote: None,
+            match_method: None,
+            extractor_used: None,
+            success: false,
+            failure_reason: Some("ParseError"),
+        }
+    }
+
+    /// Relay message decoded but carried no usable inner client message
+    /// (missing RelayMsg option, or a nested relay chain we don't support).
+    /// The relay wrapper still yields link/peer addresses, MAC, and
+    /// option 18/37 identifiers.
+    pub fn relay_failed(
+        relay_msg: &v6::RelayMessage,
+        relay_addr: Ipv6Addr,
+        reason: &'static str,
+    ) -> Self {
+        let option1837 = relay_msg.option1837();
+
+        Self {
+            timestamp: now(),
+            message_type: "Unknown",
+            xid: String::new(),
+            relay_addr,
+            relay_link_addr: relay_msg.link_addr(),
+            relay_peer_addr: relay_msg.peer_addr(),
+            mac_address: relay_msg.hw_addr(),
+            client_id: None,
+            option1837_interface: option1837
+                .as_ref()
+                .and_then(|o| o.interface.as_ref().map(|s| s.to_string())),
+            option1837_remote: option1837
+                .as_ref()
+                .and_then(|o| o.remote.as_ref().map(|s| s.to_string())),
+            requested_ipv6_na: None,
+            requested_ipv6_pd: None,
+            reservation_ipv6_na: None,
+            reservation_ipv6_pd: None,
+            reservation_ipv4: None,
+            reservation_mac: None,
+            reservation_duid: None,
+            reservation_option1837_interface: None,
+            reservation_option1837_remote: None,
+            match_method: None,
+            extractor_used: None,
+            success: false,
+            failure_reason: Some(reason),
+        }
+    }
+
+    /// A response was built but never reached the wire (encode or send
+    /// failure). Keeps the reservation/match data
+    pub fn send_failed(
+        input_msg: &v6::Message,
+        relay_msg: &v6::RelayMessage,
+        relay_addr: Ipv6Addr,
+        reservation: Option<&Reservation>,
+        reservation_match: Option<ReservationMatch>,
+        reason: &'static str,
+    ) -> Self {
+        let mut event = Self::success(
+            input_msg,
+            relay_msg,
+            relay_addr,
+            reservation,
+            reservation_match,
+        );
+        event.success = false;
+        event.failure_reason = Some(reason);
+        event
     }
 }
 

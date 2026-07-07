@@ -1,8 +1,11 @@
+mod batch;
 pub mod events;
 pub mod writer;
 
 #[cfg(feature = "clickhouse")]
 pub mod clickhouse;
+#[cfg(feature = "clickhouse")]
+mod clickhouse_http;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;

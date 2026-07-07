@@ -20,7 +20,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Outcome of a POST. Callers use this to decide whether to retry, drop the
 /// batch, or move on. Splitting this on the writer side keeps the runner in
-/// `crate::batch` HTTP-agnostic.
+/// `crate::analytics::batch` HTTP-agnostic.
 pub enum PostOutcome {
     Ok,
     /// HTTP status the server is unlikely to recover from on retry (4xx other
