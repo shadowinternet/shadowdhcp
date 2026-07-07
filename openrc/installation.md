@@ -29,11 +29,21 @@ cp config.json /etc/shadowdhcp/
 cp ids.json /etc/shadowdhcp/
 cp reservations.json /etc/shadowdhcp/
 
-# Allow shadowdhcp user to read config
-chown -R root:shadowdhcp /etc/shadowdhcp
-chmod 750 /etc/shadowdhcp
-chmod 640 /etc/shadowdhcp/*
+# shadowdhcp reads config.json/ids.json and needs to rewrite
+# reservations.json: the management `replace` command writes
+# reservations.json.tmp and renames it over the original, so the service
+# user needs write access to both the file and the directory.
+chown root:shadowdhcp /etc/shadowdhcp /etc/shadowdhcp/config.json /etc/shadowdhcp/ids.json
+chown shadowdhcp:shadowdhcp /etc/shadowdhcp/reservations.json
+chmod 770 /etc/shadowdhcp
+chmod 640 /etc/shadowdhcp/config.json /etc/shadowdhcp/ids.json
+chmod 660 /etc/shadowdhcp/reservations.json
 ```
+
+If you do not use the management interface (no `mgmt_address` in
+`config.json`), nothing ever writes to this directory and you can keep it
+read-only for the service instead: `chmod 750 /etc/shadowdhcp` and
+`chmod 640` on all three files.
 
 ### Install the OpenRC service
 
@@ -45,15 +55,13 @@ chmod +x /etc/init.d/shadowdhcp
 mkdir -p /var/log/shadowdhcp
 chown shadowdhcp:shadowdhcp /var/log/shadowdhcp
 chmod 750 /var/log/shadowdhcp
-
-# Enable and start
-rc-update add shadowdhcp default
-rc-service shadowdhcp start
 ```
+
+Don't start the service yet — configure logging first (next step) so the server doesn't run without logs.
 
 ## 2. Configure logging
 
-The OpenRC service does not capture stdout — logs must be configured in `config.json`. Add a `logging.file` block before starting the service:
+The OpenRC service does not capture stdout (only stderr, for startup errors, into `/var/log/shadowdhcp/error.log`) — logs must be configured in `config.json`. Add a `logging.file` block before starting the service:
 
 ```json
 "logging": {
@@ -65,6 +73,13 @@ The OpenRC service does not capture stdout — logs must be configured in `confi
 ```
 
 Rotation is daily, in-process; no logrotate dependency. See [logging](../docs/logging.md) for the other sinks (stdout, ClickHouse).
+
+Then enable and start:
+
+```bash
+rc-update add shadowdhcp default
+rc-service shadowdhcp start
+```
 
 ## 3. ClickHouse analytics (optional)
 
@@ -110,8 +125,9 @@ service shadowdhcp status
 | File | Description |
 |------|-------------|
 | `/usr/local/bin/shadowdhcp` | DHCP server binary (cap_net_bind_service) |
-| `/etc/shadowdhcp/` | Configuration files (root:shadowdhcp 750) |
+| `/etc/shadowdhcp/` | Configuration files (root:shadowdhcp 770; reservations.json writable by the service for the management `replace` command) |
 | `/var/log/shadowdhcp/shadowdhcp.log` | DHCP server logs (shadowdhcp:shadowdhcp 640) |
+| `/var/log/shadowdhcp/error.log` | Captured stderr: startup/config errors |
 | `/etc/init.d/shadowdhcp` | OpenRC service script |
 
 ## Service Users

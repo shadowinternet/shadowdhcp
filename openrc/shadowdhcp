@@ -11,6 +11,13 @@ command_user="shadowdhcp:shadowdhcp"
 
 capabilities="^cap_net_bind_service"
 
+# Wait between restarts so a startup failure (e.g. bad config.json, which
+# exits 1) can't spin in a tight respawn loop; retry forever because DHCP
+# must come back. Startup diagnostics go to stderr, captured in error_log.
+respawn_delay=5
+respawn_max=0
+error_log="/var/log/shadowdhcp/error.log"
+
 extra_started_commands="reload"
 description_reload="Reload DHCP reservations"
 
@@ -21,6 +28,7 @@ depend() {
 
 start_pre() {
     checkpath --directory --owner shadowdhcp:shadowdhcp --mode 0750 /var/log/shadowdhcp
+    checkpath --file --owner shadowdhcp:shadowdhcp --mode 0640 /var/log/shadowdhcp/error.log
 }
 
 reload() {
