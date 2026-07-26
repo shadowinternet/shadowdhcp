@@ -1,4 +1,3 @@
-use advmac::MacAddr6;
 use dhcproto::v4::{self, DhcpOption, Flags};
 use std::{net::Ipv4Addr, sync::Arc};
 use tracing::{debug, warn};
@@ -7,6 +6,7 @@ use crate::types::Reservation;
 
 use crate::analytics::events::ReservationMatch;
 use crate::config::Config;
+use crate::mac::MacAddr6;
 use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
 

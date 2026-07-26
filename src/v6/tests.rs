@@ -1,5 +1,5 @@
+use crate::mac::MacAddr6;
 use crate::types::{Duid, Option82, Reservation, V4Subnet};
-use advmac::MacAddr6;
 use dhcproto::{
     v6::{
         ClientLinklayerAddress, DhcpOption, DhcpOptions, IAAddr, IAPrefix, Message, MessageType,

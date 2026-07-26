@@ -1,8 +1,8 @@
 use std::{hash::Hash, sync::Arc};
 
-use advmac::MacAddr6;
 use dashmap::DashMap;
 
+use crate::mac::MacAddr6;
 use crate::types::{Duid, Option1837, Option82, Reservation};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -95,7 +95,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use super::*;
-    use advmac::MacAddr6;
+    use crate::mac::MacAddr6;
     use dashmap::DashMap;
 
     #[test]

@@ -1,5 +1,5 @@
+use crate::mac::MacAddr6;
 use crate::types::{Duid, Reservation};
-use advmac::MacAddr6;
 use compact_str::CompactString;
 use dhcproto::v4;
 use dhcproto::v6::{self, MessageType};

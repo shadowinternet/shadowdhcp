@@ -3,10 +3,11 @@
 //! Provides configurable extraction of client MAC addresses from relay messages
 //! using multiple sources with varying reliability levels.
 
-use advmac::MacAddr6;
 use dhcproto::v6::{DhcpOption, Message, RelayMessage};
 use serde::Deserialize;
 use tracing::debug;
+
+use crate::mac::MacAddr6;
 
 /// MAC address extraction method.
 ///

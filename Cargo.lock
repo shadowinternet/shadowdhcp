@@ -3,31 +3,12 @@
 version = 4
 
 [[package]]
-name = "advmac"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41c1bfd911d1173023132c681f7434ed956ec5459d7520b4f85331fc00d93bf0"
-dependencies = [
- "arrayvec",
- "serde",
-]
-
-[[package]]
 name = "arc-swap"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a3a1fd6f75306b68087b831f025c712524bcb19aad54e557b1129cfa0a2b207"
 dependencies = [
  "rustversion",
-]
-
-[[package]]
-name = "arrayvec"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -836,7 +817,6 @@ dependencies = [
 name = "shadowdhcp"
 version = "0.3.0"
 dependencies = [
- "advmac",
  "arc-swap",
  "base64",
  "compact_str",

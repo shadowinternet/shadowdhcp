@@ -1,9 +1,9 @@
 use std::{collections::HashMap, str::FromStr};
 
-use advmac::MacAddr6;
 use compact_str::ToCompactString;
 use tracing::debug;
 
+use crate::mac::MacAddr6;
 use crate::types::Option82;
 
 pub type Option82ExtractorFn = fn(opt: &Option82) -> Option<Option82>;

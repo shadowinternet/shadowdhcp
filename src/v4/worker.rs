@@ -9,11 +9,10 @@ use std::{
 use tracing::{debug, error, info, trace};
 
 use crate::config::Config;
+use crate::mac::MacAddr6;
 use crate::opt82_cache::Opt82Cache;
 use crate::reservationdb::ReservationDb;
 use crate::shutdown::Shutdown;
-
-use advmac::MacAddr6;
 
 use crate::{
     analytics::{

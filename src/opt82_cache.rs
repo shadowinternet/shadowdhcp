@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
-use advmac::MacAddr6;
 use dashmap::DashMap;
 use tracing::{debug, info};
 
+use crate::mac::MacAddr6;
 use crate::reservationdb::ReservationDb;
 use crate::types::Option82;
 

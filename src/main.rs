@@ -19,6 +19,7 @@ use crate::{analytics::events::DhcpEvent, types::Reservation};
 mod analytics;
 mod config;
 mod logging;
+mod mac;
 mod mgmt;
 mod opt82_cache;
 mod reservationdb;

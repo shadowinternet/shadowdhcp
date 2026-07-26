@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use crate::mac::MacAddr6;
 use crate::types::{Option82, Reservation};
 use crate::v4::extensions::RelayAgentInformationExt;
-use advmac::MacAddr6;
 use compact_str::CompactString;
 use dhcproto::v4::relay::RelayAgentInformation;
 use tracing::debug;

@@ -1,10 +1,11 @@
 use core::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use advmac::MacAddr6;
 use compact_str::CompactString;
 use ipnet::{Ipv4Net, Ipv6Net};
 use serde::{de::Visitor, Deserialize, Serialize};
+
+use crate::mac::MacAddr6;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(deny_unknown_fields)]

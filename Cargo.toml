@@ -28,7 +28,6 @@ default = ["clickhouse"]
 clickhouse = ["dep:ureq", "dep:base64"]
 
 [dependencies]
-advmac = { version = "1.0.3", default-features = false, features = ["serde", "std"] }
 arc-swap = "1.7.1"
 base64 = { version = "0.22", default-features = false, features = ["std"], optional = true }
 compact_str = { version = "0.9.0", features = ["serde"] }
