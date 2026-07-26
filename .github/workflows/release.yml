@@ -73,7 +73,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
@@ -98,7 +98,7 @@ jobs:
         run: cp target/${{ matrix.target }}/release-lto/shadowdhcp.exe shadowdhcp-${{ matrix.suffix }}.exe
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shadowdhcp-${{ matrix.suffix }}
           path: shadowdhcp-*
@@ -109,7 +109,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
