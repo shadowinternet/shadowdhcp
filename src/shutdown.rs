@@ -25,6 +25,7 @@ impl Shutdown {
         Self::default()
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn signal(&self) {
         self.0.flag.store(true, Ordering::SeqCst);
         // Take the mutex so the store can't slip between a waiter's
