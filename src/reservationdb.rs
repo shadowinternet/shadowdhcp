@@ -15,16 +15,33 @@ pub enum ReservationKey {
 
 pub struct ReservationDb {
     inner: DashMap<ReservationKey, Arc<Reservation>>,
+    /// Reservations loaded, as opposed to index keys: one reservation adds
+    /// one key per identifier it carries (MAC, DUID, Option 82, ...).
+    count: usize,
+}
+
+/// Build a database from a reservation list. The result is immutable once
+/// built; a reload or replace constructs a new one and swaps it in.
+impl From<Vec<Reservation>> for ReservationDb {
+    fn from(reservations: Vec<Reservation>) -> Self {
+        let mut db = Self::new();
+        for reservation in reservations {
+            db.insert(reservation);
+        }
+        db
+    }
 }
 
 impl ReservationDb {
     pub fn new() -> Self {
         Self {
             inner: DashMap::new(),
+            count: 0,
         }
     }
 
-    pub fn insert(&self, reservation: Reservation) {
+    pub fn insert(&mut self, reservation: Reservation) {
+        self.count += 1;
         let stored = Arc::new(reservation);
 
         if let Some(mac) = stored.mac {
@@ -44,12 +61,6 @@ impl ReservationDb {
         if let Some(ref opt1837) = stored.option1837 {
             self.inner
                 .insert(ReservationKey::Opt1837(opt1837.clone()), stored.clone());
-        }
-    }
-
-    pub fn load_reservations(&self, reservations: Vec<Reservation>) {
-        for reservation in reservations.into_iter() {
-            self.insert(reservation);
         }
     }
 
@@ -83,10 +94,11 @@ impl ReservationDb {
             .contains_key(&ReservationKey::Opt82(opt82.clone()))
     }
 
-    /// Returns the number of entries in the database.
-    /// Note: A single reservation may have multiple keys (MAC, DUID, Option82, etc.)
-    pub fn len(&self) -> usize {
-        self.inner.len()
+    /// The number of reservations loaded. Not the number of index entries,
+    /// which is larger whenever a reservation carries more than one
+    /// identifier.
+    pub fn reservation_count(&self) -> usize {
+        self.count
     }
 }
 
@@ -97,6 +109,27 @@ mod tests {
     use super::*;
     use crate::mac::MacAddr6;
     use dashmap::DashMap;
+
+    #[test]
+    fn reservation_count_is_not_key_count() {
+        let mut db = ReservationDb::new();
+        // One reservation, two identifiers: two keys, one reservation.
+        db.insert(Reservation {
+            ipv4: Ipv4Addr::new(100, 64, 0, 1),
+            ipv6_na: "2001:db8::1".parse().unwrap(),
+            ipv6_pd: "2001:db8:1::/56".parse().unwrap(),
+            mac: Some("00:11:22:33:44:55".parse().unwrap()),
+            duid: None,
+            option82: Some(Option82 {
+                circuit: None,
+                remote: Some("00-11-22-33-44-55".into()),
+                subscriber: None,
+            }),
+            option1837: None,
+        });
+        assert_eq!(db.inner.len(), 2);
+        assert_eq!(db.reservation_count(), 1);
+    }
 
     #[test]
     fn test_map_lookups() {
@@ -135,8 +168,6 @@ mod tests {
 
     #[test]
     fn test_reservation_lookups() {
-        let db = ReservationDb::new();
-
         let json_str = r#"
         [
             {
@@ -167,7 +198,7 @@ mod tests {
         ]
         "#;
         let reservations: Vec<Reservation> = serde_json::from_str(json_str).unwrap();
-        db.load_reservations(reservations);
+        let db = ReservationDb::from(reservations);
 
         assert_eq!(
             db.by_mac(MacAddr6::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]))

@@ -43,7 +43,7 @@ fn create_env() -> (Config, ReservationDb, Opt82Cache) {
         option1837: None,
     };
 
-    let reservations = ReservationDb::new();
+    let mut reservations = ReservationDb::new();
     reservations.insert(reservation.clone());
 
     let leases = Opt82Cache::new();
@@ -765,8 +765,7 @@ fn dynamic_opt82_binding() {
     ]
     "#;
     let reservations: Vec<Reservation> = serde_json::from_str(json_str).unwrap();
-    let db = ReservationDb::new();
-    db.load_reservations(reservations);
+    let db = ReservationDb::from(reservations);
     let leases = Opt82Cache::new();
     let opt82 = Option82 {
         circuit: Some("99-11-22-33-44-55".into()),

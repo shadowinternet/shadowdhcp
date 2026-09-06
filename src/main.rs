@@ -114,9 +114,7 @@ fn main() {
     };
     tracing::info!("Loaded {} reservations", reservations.len());
 
-    let db = ReservationDb::new();
-    db.load_reservations(reservations);
-    let db = Arc::new(ArcSwap::from_pointee(db));
+    let db = Arc::new(ArcSwap::from_pointee(ReservationDb::from(reservations)));
     let leases = Arc::new(Opt82Cache::new());
 
     let loaded_config = config.load();

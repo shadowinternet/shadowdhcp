@@ -105,8 +105,7 @@ mod tests {
     }
 
     fn reservations_with_opt82(opt82: Option82) -> ReservationDb {
-        let db = ReservationDb::new();
-        db.load_reservations(vec![Reservation {
+        ReservationDb::from(vec![Reservation {
             ipv4: Ipv4Addr::new(10, 0, 0, 1),
             ipv6_na: Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1),
             ipv6_pd: "2001:db8:1::/48".parse::<Ipv6Net>().unwrap(),
@@ -114,8 +113,7 @@ mod tests {
             duid: None,
             option82: Some(opt82),
             option1837: None,
-        }]);
-        db
+        }])
     }
 
     #[test]

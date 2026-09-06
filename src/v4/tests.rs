@@ -41,7 +41,7 @@ fn create_test_env() -> (Config, ReservationDb, Opt82Cache) {
         ..Default::default()
     };
 
-    let reservations = ReservationDb::new();
+    let mut reservations = ReservationDb::new();
 
     // MAC-based reservation
     let reservation_mac = Reservation {
@@ -352,7 +352,7 @@ fn discover_no_reservation_returns_none() {
 
 #[test]
 fn discover_reservation_not_in_subnet_returns_none() {
-    let (config, reservations, leases) = create_test_env();
+    let (config, mut reservations, leases) = create_test_env();
 
     // Add a reservation with an IP not in any configured subnet
     let bad_reservation = Reservation {

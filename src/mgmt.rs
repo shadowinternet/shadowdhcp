@@ -100,33 +100,22 @@ fn handle_client(stream: TcpStream, reservations: &Arc<ArcSwap<ReservationDb>>, 
         },
         Ok(MgmtRequest::Replace {
             reservations: new_res,
-        }) => match atomic_write_reservations(config_dir, &new_res) {
-            Ok(()) => {
-                let count = new_res.len();
-                let new_db = ReservationDb::new();
-                new_db.load_reservations(new_res);
-                reservations.store(Arc::new(new_db));
-                info!(count, "replaced reservations via TCP and persisted to disk");
-                MgmtResponse {
-                    success: true,
-                    error: None,
-                    message: Some(format!("Replaced with {} reservations", count)),
-                    reservation_count: Some(count),
-                }
-            }
-            Err(e) => {
-                warn!(%e, "failed to persist reservations to disk");
-                MgmtResponse {
-                    success: false,
-                    error: Some(format!("Failed to write reservations: {}", e)),
-                    message: None,
-                    reservation_count: None,
-                }
-            }
+        }) => match replace(reservations, config_dir, new_res) {
+            Ok(count) => MgmtResponse {
+                success: true,
+                error: None,
+                message: Some(format!("Replaced with {} reservations", count)),
+                reservation_count: Some(count),
+            },
+            Err(e) => MgmtResponse {
+                success: false,
+                error: Some(e),
+                message: None,
+                reservation_count: None,
+            },
         },
         Ok(MgmtRequest::Status) => {
-            let db = reservations.load();
-            let count = db.len();
+            let count = reservations.load().reservation_count();
             MgmtResponse {
                 success: true,
                 error: None,
@@ -147,6 +136,24 @@ fn handle_client(stream: TcpStream, reservations: &Arc<ArcSwap<ReservationDb>>, 
         warn!(%e, "failed to write response");
     }
     let _ = writer.write_all(b"\n");
+}
+
+/// Persist a new reservation set and swap it in. Disk first: if the write
+/// fails the running set is left alone, so a `replace` never leaves memory
+/// and disk disagreeing.
+fn replace(
+    reservations: &Arc<ArcSwap<ReservationDb>>,
+    config_dir: &Path,
+    new_res: Vec<Reservation>,
+) -> Result<usize, String> {
+    if let Err(e) = atomic_write_reservations(config_dir, &new_res) {
+        warn!(%e, "failed to persist reservations to disk");
+        return Err(format!("Failed to write reservations: {}", e));
+    }
+    let count = new_res.len();
+    reservations.store(Arc::new(ReservationDb::from(new_res)));
+    info!(count, "replaced reservations via TCP and persisted to disk");
+    Ok(count)
 }
 
 /// Atomically write reservations to disk using write-rename pattern.
@@ -188,9 +195,7 @@ pub fn reload_from_disk(
         .map_err(|e| format!("Failed to parse reservations: {}", e))?;
 
     let count = new_reservations.len();
-    let new_db = ReservationDb::new();
-    new_db.load_reservations(new_reservations);
-    reservations.store(Arc::new(new_db));
+    reservations.store(Arc::new(ReservationDb::from(new_reservations)));
 
     info!(count, "reloaded reservations from disk");
     Ok(count)
