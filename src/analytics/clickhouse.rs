@@ -47,115 +47,126 @@ struct V6Row<'a> {
     inner: &'a DhcpEventV6,
 }
 
+/// The buffered rows bound for one table. Each event variant has its own,
+/// since each lands in a different table and is POSTed separately.
+struct SubBatch {
+    table: &'static str,
+    url: String,
+    body: Vec<u8>,
+    count: usize,
+}
+
+impl SubBatch {
+    /// `capacity` is the initial body buffer. It is only ever cleared, never
+    /// shrunk, so size it for the table's real volume.
+    fn new(base_url: &str, database: &str, table: &'static str, capacity: usize) -> Self {
+        // input_format_skip_unknown_fields lets us emit JSON keys that aren't
+        // in the schema (e.g. the original `requested_ipv6_pd` Ipv6Net string
+        // that we replace with split prefix/length columns) without ClickHouse
+        // rejecting the batch.
+        let url = format!(
+            "{base_url}/?database={database}&input_format_skip_unknown_fields=1\
+             &query=INSERT+INTO+{table}+FORMAT+JSONEachRow"
+        );
+        Self {
+            table,
+            url,
+            body: Vec::with_capacity(capacity),
+            count: 0,
+        }
+    }
+
+    fn push<T: Serialize>(&mut self, row: &T) {
+        if serde_json::to_writer(&mut self.body, row).is_ok() {
+            self.body.push(b'\n');
+            self.count += 1;
+        }
+    }
+
+    fn clear(&mut self) {
+        self.body.clear();
+        self.count = 0;
+    }
+
+    /// POST this sub-batch.
+    ///
+    /// * `Ok` - clear the buffer.
+    /// * `Permanent` (4xx other than 408/429) - drop the sub-batch with a warn
+    ///   so a single poisoned row can't wedge the writer forever.
+    /// * `Transient` (5xx, network, 408/429) - leave it buffered and return
+    ///   `Err` so the runner retries it.
+    fn flush(&mut self, agent: &Agent, auth: &str) -> Result<(), ()> {
+        if self.count == 0 {
+            return Ok(());
+        }
+        match post(agent, &self.url, auth, &self.body) {
+            PostOutcome::Ok => {
+                self.clear();
+                Ok(())
+            }
+            PostOutcome::Permanent(status) => {
+                warn!(
+                    "ClickHouse {} dropped batch of {} after permanent HTTP {status}",
+                    self.table, self.count
+                );
+                self.clear();
+                Ok(())
+            }
+            PostOutcome::Transient(msg) => {
+                warn!(
+                    "ClickHouse {} batch of {} retrying: {msg}",
+                    self.table, self.count
+                );
+                Err(())
+            }
+        }
+    }
+}
+
 struct ChEventsSink {
     agent: Agent,
     base_url: String,
-    url_v4: String,
-    url_v6: String,
     auth: String,
     host_name: String,
-    body_v4: Vec<u8>,
-    body_v6: Vec<u8>,
-    count_v4: usize,
-    count_v6: usize,
+    v4: SubBatch,
+    v6: SubBatch,
     dropped: Arc<AtomicU64>,
 }
 
 impl BatchSink<DhcpEvent> for ChEventsSink {
     fn reset(&mut self) {
-        self.body_v4.clear();
-        self.body_v6.clear();
-        self.count_v4 = 0;
-        self.count_v6 = 0;
+        self.v4.clear();
+        self.v6.clear();
     }
 
     fn push(&mut self, event: DhcpEvent) {
+        let host_name = self.host_name.as_str();
         match event {
-            DhcpEvent::V4(v4) => {
-                let row = HostRow {
-                    host_name: &self.host_name,
-                    inner: &v4,
-                };
-                if serde_json::to_writer(&mut self.body_v4, &row).is_ok() {
-                    self.body_v4.push(b'\n');
-                    self.count_v4 += 1;
-                }
-            }
-            DhcpEvent::V6(v6) => {
-                let row = V6Row {
-                    host_name: &self.host_name,
-                    requested_ipv6_pd_prefix: v6.requested_ipv6_pd.map(|n| n.network()),
-                    requested_ipv6_pd_length: v6.requested_ipv6_pd.map(|n| n.prefix_len()),
-                    reservation_ipv6_pd_prefix: v6.reservation_ipv6_pd.map(|n| n.network()),
-                    reservation_ipv6_pd_length: v6.reservation_ipv6_pd.map(|n| n.prefix_len()),
-                    inner: &v6,
-                };
-                if serde_json::to_writer(&mut self.body_v6, &row).is_ok() {
-                    self.body_v6.push(b'\n');
-                    self.count_v6 += 1;
-                }
-            }
+            DhcpEvent::V4(v4) => self.v4.push(&HostRow {
+                host_name,
+                inner: &v4,
+            }),
+            DhcpEvent::V6(v6) => self.v6.push(&V6Row {
+                host_name,
+                requested_ipv6_pd_prefix: v6.requested_ipv6_pd.map(|n| n.network()),
+                requested_ipv6_pd_length: v6.requested_ipv6_pd.map(|n| n.prefix_len()),
+                reservation_ipv6_pd_prefix: v6.reservation_ipv6_pd.map(|n| n.network()),
+                reservation_ipv6_pd_length: v6.reservation_ipv6_pd.map(|n| n.prefix_len()),
+                inner: &v6,
+            }),
         }
     }
 
     fn item_count(&self) -> usize {
-        self.count_v4 + self.count_v6
+        self.v4.count + self.v6.count
     }
 
-    /// POST v4 then v6.
-    ///
-    /// Per-sub-batch outcome:
-    /// * `Ok` — clear the buffer.
-    /// * `Permanent` (4xx other than 408/429) — drop the sub-batch with a warn
-    ///   so a single poisoned row can't wedge the writer forever. Don't
-    ///   propagate; the other sub-batch may still be transient.
-    /// * `Transient` (5xx, network, 408/429) — leave the sub-batch buffered so
-    ///   the runner retries it.
-    ///
-    /// Returns `Err` only if any sub-batch was transient.
+    /// POST v4 then v6. A permanent failure on one does not stop the other;
+    /// returns `Err` if either was transient.
     fn flush(&mut self) -> Result<(), ()> {
-        let mut overall = Ok(());
-        if self.count_v4 > 0 {
-            match post(&self.agent, &self.url_v4, &self.auth, &self.body_v4) {
-                PostOutcome::Ok => {
-                    self.body_v4.clear();
-                    self.count_v4 = 0;
-                }
-                PostOutcome::Permanent(status) => {
-                    warn!(
-                        "ClickHouse v4 dropped batch of {} after permanent HTTP {status}",
-                        self.count_v4
-                    );
-                    self.body_v4.clear();
-                    self.count_v4 = 0;
-                }
-                PostOutcome::Transient(msg) => {
-                    warn!("ClickHouse v4 batch of {} retrying: {msg}", self.count_v4);
-                    overall = Err(());
-                }
-            }
-        }
-        if self.count_v6 > 0 {
-            match post(&self.agent, &self.url_v6, &self.auth, &self.body_v6) {
-                PostOutcome::Ok => {
-                    self.body_v6.clear();
-                    self.count_v6 = 0;
-                }
-                PostOutcome::Permanent(status) => {
-                    warn!(
-                        "ClickHouse v6 dropped batch of {} after permanent HTTP {status}",
-                        self.count_v6
-                    );
-                    self.body_v6.clear();
-                    self.count_v6 = 0;
-                }
-                PostOutcome::Transient(msg) => {
-                    warn!("ClickHouse v6 batch of {} retrying: {msg}", self.count_v6);
-                    overall = Err(());
-                }
-            }
-        }
-        overall
+        let v4 = self.v4.flush(&self.agent, &self.auth);
+        let v6 = self.v6.flush(&self.agent, &self.auth);
+        v4.and(v6)
     }
 
     fn on_start(&mut self) {
@@ -173,7 +184,7 @@ impl BatchSink<DhcpEvent> for ChEventsSink {
     }
 
     fn on_giveup(&mut self) {
-        let total = self.count_v4 + self.count_v6;
+        let total = self.item_count();
         if total > 0 {
             warn!("ClickHouse dropped batch of {total} after exhausted retries");
         }
@@ -187,30 +198,14 @@ pub fn clickhouse_writer(
     shutdown: Shutdown,
 ) {
     let base_url = cfg.url.trim_end_matches('/').to_string();
-    // input_format_skip_unknown_fields lets us emit JSON keys that aren't in
-    // the schema (e.g. the original `requested_ipv6_pd` Ipv6Net string that
-    // we replace with split prefix/length columns) without ClickHouse rejecting
-    // the batch.
-    let url_v4 = format!(
-        "{base_url}/?database={db}&input_format_skip_unknown_fields=1&query=INSERT+INTO+events_v4+FORMAT+JSONEachRow",
-        db = cfg.database,
-    );
-    let url_v6 = format!(
-        "{base_url}/?database={db}&input_format_skip_unknown_fields=1&query=INSERT+INTO+events_v6+FORMAT+JSONEachRow",
-        db = cfg.database,
-    );
 
     let mut sink = ChEventsSink {
         agent: build_agent(),
+        v4: SubBatch::new(&base_url, &cfg.database, "events_v4", 512 * 1024),
+        v6: SubBatch::new(&base_url, &cfg.database, "events_v6", 512 * 1024),
         base_url,
-        url_v4,
-        url_v6,
         auth: basic_auth_header(&cfg.user, &cfg.password),
         host_name: cfg.hostname.unwrap_or_else(read_hostname),
-        body_v4: Vec::with_capacity(512 * 1024),
-        body_v6: Vec::with_capacity(512 * 1024),
-        count_v4: 0,
-        count_v6: 0,
         dropped,
     };
 
