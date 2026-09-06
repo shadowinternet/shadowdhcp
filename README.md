@@ -63,7 +63,7 @@ See [Installation on Alpine Linux](docs/installation-alpine.md) for a complete g
 * [Reservations](docs/reservations.md) - Reservation format and extractors
 * [Management](docs/management.md) - TCP management interface
 * [Events](docs/events.md) - Analytics events and ClickHouse setup
-* [Logging](docs/logging.md) - Logging to stdout, ClickHouse, or file
+* [Logging](docs/logging.md) - Logging to stdout or a rotating file
 
 ## Current limitations
 

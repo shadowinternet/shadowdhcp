@@ -149,7 +149,7 @@ Logs are stored at `/var/log/shadowdhcp/shadowdhcp.log`
 
 Check [Github](https://github.com/shadowinternet/shadowdhcp) for release notes or breaking changes, then run: `apk upgrade`
 
-Logs are rotated daily in-process; the default config keeps 3 files. To change the path or retention, edit the `logging.file` block in `/etc/shadowdhcp/config.json`. See [logging](logging.md) for the full sink list (stdout, rotating file, ClickHouse).
+Logs are rotated daily in-process; the default config keeps 3 files. To change the path or retention, edit the `logging.file` block in `/etc/shadowdhcp/config.json`. See [logging](logging.md) for the full sink list (stdout, rotating file).
 
 ## Recommended extras
 

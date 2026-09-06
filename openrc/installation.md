@@ -72,7 +72,7 @@ The OpenRC service does not capture stdout (only stderr, for startup errors, int
 }
 ```
 
-Rotation is daily, in-process; no logrotate dependency. See [logging](../docs/logging.md) for the other sinks (stdout, ClickHouse).
+Rotation is daily, in-process; no logrotate dependency. See [logging](../docs/logging.md) for the other sink (stdout).
 
 Then enable and start:
 
