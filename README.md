@@ -26,14 +26,19 @@ See [Installation on Alpine Linux](docs/installation-alpine.md) for a complete g
 ```json
 {
     "dns_v4": ["8.8.8.8", "8.8.4.4"],
+    "dns_v6": ["2001:4860:4860::8888", "2001:4860:4860::8844"],
     "subnets_v4": [
-        {
-            "net": "100.64.0.0/24",
-            "gateway": "100.64.0.1"
-        }
+        {"net": "100.100.1.0/24", "gateway": "100.100.1.1"},
+        {"net": "100.100.2.0/24", "gateway": "100.100.2.1"}
     ],
-    "option82_extractors": ["remote_only", "normalize_remote_mac"],
-    "option1837_extractors": ["remote_only"]
+    "option82_extractors": [
+        "remote_only",
+        "subscriber_only",
+        "circuit_and_remote",
+        "remote_first_12"
+    ],
+    "option1837_extractors": ["interface_only", "remote_only", "interface_and_remote"],
+    "mac_extractors": ["client_linklayer_address"]
 }
 ```
 
@@ -42,13 +47,13 @@ See [Installation on Alpine Linux](docs/installation-alpine.md) for a complete g
 ```json
 [
     {
-        "ipv4": "100.64.0.100",
+        "ipv4": "100.100.1.100",
         "ipv6_na": "2001:db8:1::100",
         "ipv6_pd": "2001:db8:100::/56",
         "mac": "00-11-22-33-44-55"
     },
     {
-        "ipv4": "100.64.0.101",
+        "ipv4": "100.100.1.101",
         "ipv6_na": "2001:db8:1::101",
         "ipv6_pd": "2001:db8:101::/56",
         "option82": {"remote": "AA-BB-CC-DD-EE-FF"}
