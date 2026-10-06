@@ -62,8 +62,8 @@ pub enum DhcpEvent {
 /// DHCPv4 event for analytics - enables v4/v6 correlation via mac_address
 #[derive(Clone, Serialize)]
 pub struct DhcpEventV4 {
-    /// Unix milliseconds. ClickHouse parses the integer directly into a
-    /// `DateTime64(3)` column.
+    /// Unix milliseconds. In ClickHouse the schema converts this into the
+    /// `event_time` `DateTime64(3)` column (see `clickhouse_schema.sql`).
     pub timestamp: u64,
     pub message_type: Option<&'static str>,
     pub relay_addr: Ipv4Addr,
@@ -229,8 +229,8 @@ impl DhcpEventV4 {
 /// - MAC addresses → String (enables JOIN with v4 events)
 #[derive(Clone, Serialize)]
 pub struct DhcpEventV6 {
-    /// Unix milliseconds. ClickHouse parses the integer directly into a
-    /// `DateTime64(3)` column.
+    /// Unix milliseconds. In ClickHouse the schema converts this into the
+    /// `event_time` `DateTime64(3)` column (see `clickhouse_schema.sql`).
     pub timestamp: u64,
     pub message_type: &'static str,
     /// Transaction ID from the client (hex string)

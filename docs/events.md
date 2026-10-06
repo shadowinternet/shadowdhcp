@@ -86,7 +86,7 @@ No reservation found:
 
 | Field | Description |
 |-------|-------------|
-| `timestamp` | Unix timestamp in milliseconds. ClickHouse parses this integer as `DateTime64(3)`. |
+| `timestamp` | Unix timestamp in milliseconds. In ClickHouse it is stored as-is and converted into the `event_time` `DateTime64(3)` column; query and filter on `event_time`. |
 | `message_type` | DHCP message type: `Discover`, `Offer`, `Request`, `Ack`, `Nak`, `Release`, `Decline`. |
 | `relay_addr` | IPv4 address of the relay agent. |
 | `mac_address` | Client MAC address from chaddr field. |
@@ -163,7 +163,7 @@ No reservation found:
 
 | Field | Description |
 |-------|-------------|
-| `timestamp` | Unix timestamp in milliseconds. ClickHouse parses this integer as `DateTime64(3)`. |
+| `timestamp` | Unix timestamp in milliseconds. In ClickHouse it is stored as-is and converted into the `event_time` `DateTime64(3)` column; query and filter on `event_time`. |
 | `message_type` | DHCPv6 message type: `Solicit`, `Advertise`, `Request`, `Reply`, `Renew`, `Rebind`, `Release`, `Decline`. |
 | `xid` | Transaction ID from the client (hex string). |
 | `relay_addr` | IPv6 address the relay sent from. |
@@ -212,11 +212,10 @@ clickhouse-client --password --multiquery < clickhouse_schema.sql
 This creates:
 - `dhcp.events_v4` - DHCPv4 events table
 - `dhcp.events_v6` - DHCPv6 events table
-- Materialized views for common aggregations (frequent clients, relay statistics)
 
 Read the comment in `clickhouse_schema.sql` for details on creating a user that only has permission to write to the DHCP tables.
 
-The ClickHouse table column layout closely mirrors the TCP JSON shape shown above, with one shape difference: the IPv6 prefix-delegation fields (`requested_ipv6_pd`, `reservation_ipv6_pd`) are split into separate columns — `*_prefix` (typed `IPv6`) and `*_length` (typed `UInt8`) — so prefixes can be queried with ClickHouse's IP functions (`IPv6CIDRToRange`, etc.).
+The ClickHouse table column layout closely mirrors the TCP JSON shape shown above, with two differences: an extra `event_time` `DateTime64(3)` column derived from `timestamp` by the schema, and the IPv6 prefix-delegation fields (`requested_ipv6_pd`, `reservation_ipv6_pd`) are split into separate columns — `*_prefix` (typed `IPv6`) and `*_length` (typed `UInt8`) — so prefixes can be queried with ClickHouse's IP functions (`IPv6CIDRToRange`, etc.).
 
 ### 2. Add the clickhouse block to config.json
 

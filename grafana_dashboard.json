@@ -90,7 +90,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT count() AS \"Requests\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "rawSql": "SELECT count() AS \"Requests\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}')",
           "refId": "A"
         }
       ],
@@ -168,7 +168,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 2) AS success_pct FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "rawSql": "SELECT round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 2) AS success_pct FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}')",
           "refId": "A"
         }
       ],
@@ -240,7 +240,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT countIf(success = 0) AS \"Failures\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "rawSql": "SELECT countIf(success = 0) AS \"Failures\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}')",
           "refId": "A"
         }
       ],
@@ -304,7 +304,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT count() AS \"Requests\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "rawSql": "SELECT count() AS \"Requests\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}')",
           "refId": "A"
         }
       ],
@@ -382,7 +382,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 2) AS success_pct FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "rawSql": "SELECT round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 2) AS success_pct FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}')",
           "refId": "A"
         }
       ],
@@ -454,7 +454,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT countIf(success = 0) AS \"Failures\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}')",
+          "rawSql": "SELECT countIf(success = 0) AS \"Failures\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}')",
           "refId": "A"
         }
       ],
@@ -625,7 +625,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(timestamp) AS time, countIf(success = 1) AS \"DHCPv4 success\", countIf(success = 0) AS \"DHCPv4 failure\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, countIf(success = 1) AS \"DHCPv4 success\", countIf(success = 0) AS \"DHCPv4 failure\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
           "refId": "A"
         },
         {
@@ -636,7 +636,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(timestamp) AS time, countIf(success = 1) AS \"DHCPv6 success\", countIf(success = 0) AS \"DHCPv6 failure\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, countIf(success = 1) AS \"DHCPv6 success\", countIf(success = 0) AS \"DHCPv6 failure\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') GROUP BY time ORDER BY time",
           "refId": "B"
         }
       ],
@@ -715,7 +715,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT coalesce(failure_reason, 'unknown') AS reason, count() AS n FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY reason ORDER BY n DESC LIMIT 10",
+          "rawSql": "SELECT coalesce(failure_reason, 'unknown') AS reason, count() AS n FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY reason ORDER BY n DESC LIMIT 10",
           "refId": "A"
         }
       ],
@@ -781,7 +781,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT coalesce(failure_reason, 'unknown') AS reason, count() AS n FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY reason ORDER BY n DESC LIMIT 10",
+          "rawSql": "SELECT coalesce(failure_reason, 'unknown') AS reason, count() AS n FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY reason ORDER BY n DESC LIMIT 10",
           "refId": "A"
         }
       ],
@@ -883,7 +883,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT * FROM (SELECT 'v4' AS \"Proto\", coalesce(mac_address, '?') AS \"Client\", count() AS \"Failures\", arrayStringConcat(groupUniqArray(3)(coalesce(failure_reason, 'unknown')), ', ') AS \"Reasons\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY \"Client\" UNION ALL SELECT 'v6' AS \"Proto\", coalesce(mac_address, coalesce(client_id, '?')) AS \"Client\", count() AS \"Failures\", arrayStringConcat(groupUniqArray(3)(coalesce(failure_reason, 'unknown')), ', ') AS \"Reasons\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY \"Client\") ORDER BY \"Failures\" DESC LIMIT 20",
+          "rawSql": "SELECT * FROM (SELECT 'v4' AS \"Proto\", coalesce(mac_address, '?') AS \"Client\", count() AS \"Failures\", arrayStringConcat(groupUniqArray(3)(coalesce(failure_reason, 'unknown')), ', ') AS \"Reasons\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY \"Client\" UNION ALL SELECT 'v6' AS \"Proto\", coalesce(mac_address, coalesce(client_id, '?')) AS \"Client\", count() AS \"Failures\", arrayStringConcat(groupUniqArray(3)(coalesce(failure_reason, 'unknown')), ', ') AS \"Reasons\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND success = 0 AND match(host_name, '${host:regex}') GROUP BY \"Client\") ORDER BY \"Failures\" DESC LIMIT 20",
           "refId": "A"
         }
       ],
@@ -949,7 +949,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT * FROM (SELECT timestamp AS \"Time\", 'v4' AS \"Proto\", host_name AS \"Server\", coalesce(message_type, '') AS \"Type\", toString(relay_addr) AS \"Relay\", coalesce(mac_address, '') AS \"MAC / Client ID\", coalesce(failure_reason, '') AS \"Reason\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}') UNION ALL SELECT timestamp AS \"Time\", 'v6' AS \"Proto\", host_name AS \"Server\", message_type AS \"Type\", toString(relay_addr) AS \"Relay\", coalesce(mac_address, coalesce(client_id, '')) AS \"MAC / Client ID\", coalesce(failure_reason, '') AS \"Reason\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND success = 0 AND match(host_name, '${host:regex}')) ORDER BY \"Time\" DESC LIMIT 200",
+          "rawSql": "SELECT * FROM (SELECT event_time AS \"Time\", 'v4' AS \"Proto\", host_name AS \"Server\", coalesce(message_type, '') AS \"Type\", toString(relay_addr) AS \"Relay\", coalesce(mac_address, '') AS \"MAC / Client ID\", coalesce(failure_reason, '') AS \"Reason\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND success = 0 AND match(host_name, '${host:regex}') UNION ALL SELECT event_time AS \"Time\", 'v6' AS \"Proto\", host_name AS \"Server\", message_type AS \"Type\", toString(relay_addr) AS \"Relay\", coalesce(mac_address, coalesce(client_id, '')) AS \"MAC / Client ID\", coalesce(failure_reason, '') AS \"Reason\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND success = 0 AND match(host_name, '${host:regex}')) ORDER BY \"Time\" DESC LIMIT 200",
           "refId": "A"
         }
       ],
@@ -1105,7 +1105,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT mac_address AS \"MAC address\", count() AS \"Total\", countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\", round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 1) AS \"Success %\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND mac_address IS NOT NULL AND match(host_name, '${host:regex}') GROUP BY mac_address ORDER BY \"Total\" DESC LIMIT 25",
+          "rawSql": "SELECT mac_address AS \"MAC address\", count() AS \"Total\", countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\", round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 1) AS \"Success %\", max(event_time) AS \"Last seen\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND mac_address IS NOT NULL AND match(host_name, '${host:regex}') GROUP BY mac_address ORDER BY \"Total\" DESC LIMIT 25",
           "refId": "A"
         }
       ],
@@ -1248,7 +1248,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT mac_address AS \"MAC address\", count() AS \"Total\", countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\", round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 1) AS \"Success %\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND mac_address IS NOT NULL AND match(host_name, '${host:regex}') GROUP BY mac_address ORDER BY \"Total\" DESC LIMIT 25",
+          "rawSql": "SELECT mac_address AS \"MAC address\", count() AS \"Total\", countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\", round(countIf(success = 1) * 100.0 / nullIf(count(), 0), 1) AS \"Success %\", max(event_time) AS \"Last seen\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND mac_address IS NOT NULL AND match(host_name, '${host:regex}') GROUP BY mac_address ORDER BY \"Total\" DESC LIMIT 25",
           "refId": "A"
         }
       ],
@@ -1371,7 +1371,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT toString(relay_addr) AS relay, countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY relay ORDER BY count() DESC LIMIT 20",
+          "rawSql": "SELECT toString(relay_addr) AS relay, countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') GROUP BY relay ORDER BY count() DESC LIMIT 20",
           "refId": "A"
         }
       ],
@@ -1494,7 +1494,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT toString(relay_addr) AS relay, countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY relay ORDER BY count() DESC LIMIT 20",
+          "rawSql": "SELECT toString(relay_addr) AS relay, countIf(success = 1) AS \"OK\", countIf(success = 0) AS \"Failed\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') GROUP BY relay ORDER BY count() DESC LIMIT 20",
           "refId": "A"
         }
       ],
@@ -1590,7 +1590,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(timestamp) AS time, concat(host_name, ' (v4)') AS server, count() AS requests FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time, server ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, concat(host_name, ' (v4)') AS server, count() AS requests FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') GROUP BY time, server ORDER BY time",
           "refId": "A"
         },
         {
@@ -1601,7 +1601,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(timestamp) AS time, concat(host_name, ' (v6)') AS server, count() AS requests FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY time, server ORDER BY time",
+          "rawSql": "SELECT $__timeInterval(event_time) AS time, concat(host_name, ' (v6)') AS server, count() AS requests FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') GROUP BY time, server ORDER BY time",
           "refId": "B"
         }
       ],
@@ -1681,7 +1681,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT coalesce(match_method, 'unmatched') AS method, count() AS n FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY method ORDER BY n DESC",
+          "rawSql": "SELECT coalesce(match_method, 'unmatched') AS method, count() AS n FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') GROUP BY method ORDER BY n DESC",
           "refId": "A"
         }
       ],
@@ -1748,7 +1748,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT coalesce(match_method, 'unmatched') AS method, count() AS n FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') GROUP BY method ORDER BY n DESC",
+          "rawSql": "SELECT coalesce(match_method, 'unmatched') AS method, count() AS n FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') GROUP BY method ORDER BY n DESC",
           "refId": "A"
         }
       ],
@@ -1840,7 +1840,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT * FROM (SELECT concat('v4 ', coalesce(match_method, '?'), '/', coalesce(extractor_used, '?')) AS \"Extractor\", count() AS \"Matches\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND match_method IS NOT NULL GROUP BY \"Extractor\" UNION ALL SELECT concat('v6 ', coalesce(match_method, '?'), '/', coalesce(extractor_used, '?')) AS \"Extractor\", count() AS \"Matches\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND match_method IS NOT NULL GROUP BY \"Extractor\") ORDER BY \"Matches\" DESC",
+          "rawSql": "SELECT * FROM (SELECT concat('v4 ', coalesce(match_method, '?'), '/', coalesce(extractor_used, '?')) AS \"Extractor\", count() AS \"Matches\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') AND match_method IS NOT NULL GROUP BY \"Extractor\" UNION ALL SELECT concat('v6 ', coalesce(match_method, '?'), '/', coalesce(extractor_used, '?')) AS \"Extractor\", count() AS \"Matches\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') AND match_method IS NOT NULL GROUP BY \"Extractor\") ORDER BY \"Matches\" DESC",
           "refId": "A"
         }
       ],
@@ -1994,7 +1994,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT * FROM (SELECT 'v4' AS \"Proto\", toString(reservation_ipv4) AS \"Reservation\", uniqExact(mac_address) AS \"Distinct IDs\", count() AS \"Requests\", countIf(success = 0) AS \"Failed\", arrayStringConcat(arraySlice(groupUniqArray(mac_address), 1, 5), ', ') AS \"Sample identities\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v4 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND reservation_ipv4 IS NOT NULL AND mac_address IS NOT NULL GROUP BY reservation_ipv4 HAVING uniqExact(mac_address) > 1 UNION ALL SELECT 'v6' AS \"Proto\", toString(reservation_ipv6_na) AS \"Reservation\", greatest(uniqExact(mac_address), uniqExact(client_id)) AS \"Distinct IDs\", count() AS \"Requests\", countIf(success = 0) AS \"Failed\", arrayStringConcat(arraySlice(arrayFilter(x -> x != '', arrayDistinct(arrayConcat(groupUniqArray(coalesce(client_id, '')), groupUniqArray(coalesce(mac_address, ''))))), 1, 5), ', ') AS \"Sample identities\", max(timestamp) AS \"Last seen\" FROM dhcp.events_v6 WHERE $__timeFilter(timestamp) AND match(host_name, '${host:regex}') AND reservation_ipv6_na IS NOT NULL GROUP BY reservation_ipv6_na HAVING uniqExact(mac_address) > 1 OR uniqExact(client_id) > 1) ORDER BY \"Distinct IDs\" DESC, \"Requests\" DESC LIMIT 100",
+          "rawSql": "SELECT * FROM (SELECT 'v4' AS \"Proto\", toString(reservation_ipv4) AS \"Reservation\", uniqExact(mac_address) AS \"Distinct IDs\", count() AS \"Requests\", countIf(success = 0) AS \"Failed\", arrayStringConcat(arraySlice(groupUniqArray(mac_address), 1, 5), ', ') AS \"Sample identities\", max(event_time) AS \"Last seen\" FROM dhcp.events_v4 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') AND reservation_ipv4 IS NOT NULL AND mac_address IS NOT NULL GROUP BY reservation_ipv4 HAVING uniqExact(mac_address) > 1 UNION ALL SELECT 'v6' AS \"Proto\", toString(reservation_ipv6_na) AS \"Reservation\", greatest(uniqExact(mac_address), uniqExact(client_id)) AS \"Distinct IDs\", count() AS \"Requests\", countIf(success = 0) AS \"Failed\", arrayStringConcat(arraySlice(arrayFilter(x -> x != '', arrayDistinct(arrayConcat(groupUniqArray(coalesce(client_id, '')), groupUniqArray(coalesce(mac_address, ''))))), 1, 5), ', ') AS \"Sample identities\", max(event_time) AS \"Last seen\" FROM dhcp.events_v6 WHERE $__timeFilter(event_time) AND match(host_name, '${host:regex}') AND reservation_ipv6_na IS NOT NULL GROUP BY reservation_ipv6_na HAVING uniqExact(mac_address) > 1 OR uniqExact(client_id) > 1) ORDER BY \"Distinct IDs\" DESC, \"Requests\" DESC LIMIT 100",
           "refId": "A"
         }
       ],

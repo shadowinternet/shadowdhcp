@@ -6,15 +6,13 @@
 -- =============================================================================
 -- Creating a restricted 'dhcp_writer' user
 -- =============================================================================
--- The DHCP server(s) INSERT rows into the source tables. The materialized
--- views below are populated automatically by ClickHouse, but their SELECTs
--- run *as the inserting user*, so dhcp_writer also needs SELECT on the
--- events tables — otherwise the INSERT fails with ACCESS_DENIED while
--- pushing to the MV. The snippet below creates a user that:
+-- The DHCP server(s) only INSERT rows into the events tables, so the writer
+-- account gets INSERT and nothing else. Without SELECT, a leaked writer
+-- credential can't read subscriber data (MACs, Option 82/18/37 identifiers)
+-- back out. The snippet below creates a user that:
 --   * authenticates with a password (bcrypt-hashed on disk)
 --   * can INSERT into any table in the dhcp.* database
---   * can SELECT from dhcp.* (needed for the MV push; otherwise unused)
---   * CANNOT ALTER, DROP, or access any other database
+--   * CANNOT SELECT, ALTER, DROP, or access any other database
 --   * can only connect from the IP ranges you list
 --
 -- Connect as an admin user (one with access_management = 1) and run:
@@ -24,7 +22,7 @@
 --       HOST IP '2001:db8:abcd::/48',   -- v6 subnet your DHCP servers live on
 --            IP '10.20.30.0/24';        -- v4 subnet (optional; list as many as needed)
 --
---   GRANT INSERT, SELECT ON dhcp.* TO dhcp_writer;
+--   GRANT INSERT ON dhcp.* TO dhcp_writer;
 --
 -- Useful follow-ups:
 --   SHOW GRANTS FOR dhcp_writer;
@@ -35,7 +33,7 @@
 -- Connect test from a DHCP server inside the allowlist:
 --   clickhouse-client --host <server> --port 9440 --secure \
 --                     --user dhcp_writer --password \
---                     --query "INSERT INTO dhcp.events_v4 (timestamp, success) VALUES (now64(3), 1)"
+--                     --query "INSERT INTO dhcp.events_v4 (timestamp, success) VALUES (toUnixTimestamp64Milli(now64(3)), 1)"
 -- =============================================================================
 
 CREATE DATABASE IF NOT EXISTS dhcp;
@@ -43,8 +41,12 @@ CREATE DATABASE IF NOT EXISTS dhcp;
 -- DHCPv4 events table
 CREATE TABLE IF NOT EXISTS dhcp.events_v4
 (
-    -- Timing
-    timestamp DateTime64(3),
+    -- Timing. shadowdhcp sends `timestamp` as integer Unix milliseconds and
+    -- event_time converts it explicitly. Don't insert the integer straight
+    -- into a DateTime64 column: ClickHouse 26.8 reads a bare integer as
+    -- seconds regardless of precision and clamps every row to the max date.
+    timestamp Int64 CODEC(Delta, ZSTD),
+    event_time DateTime64(3) DEFAULT fromUnixTimestamp64Milli(timestamp) CODEC(Delta, ZSTD),
 
     -- Server identification
     host_name LowCardinality(String) DEFAULT '',
@@ -78,22 +80,26 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v4
     -- match_method is LowCardinality with ~5 distinct values, so a bloom
     -- filter would be redundant — LowCardinality already gives constant-time
     -- equality filtering. Same goes for message_type / extractor_used /
-    -- failure_reason; query them directly without a skip index.
-    INDEX idx_host host_name TYPE bloom_filter GRANULARITY 4,
+    -- failure_reason; query them directly without a skip index. host_name
+    -- leads the ORDER BY key, so it needs no skip index either.
     INDEX idx_mac mac_address TYPE bloom_filter GRANULARITY 4,
     INDEX idx_reservation_ipv4 reservation_ipv4 TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree()
-PARTITION BY toYYYYMM(timestamp)
-ORDER BY (host_name, relay_addr, timestamp)
-TTL timestamp + INTERVAL 90 DAY
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (host_name, relay_addr, event_time)
+TTL event_time + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192;
 
 -- DHCPv6 events table
 CREATE TABLE IF NOT EXISTS dhcp.events_v6
 (
-    -- Timing
-    timestamp DateTime64(3),
+    -- Timing. shadowdhcp sends `timestamp` as integer Unix milliseconds and
+    -- event_time converts it explicitly. Don't insert the integer straight
+    -- into a DateTime64 column: ClickHouse 26.8 reads a bare integer as
+    -- seconds regardless of precision and clamps every row to the max date.
+    timestamp Int64 CODEC(Delta, ZSTD),
+    event_time DateTime64(3) DEFAULT fromUnixTimestamp64Milli(timestamp) CODEC(Delta, ZSTD),
 
     -- Server identification
     host_name LowCardinality(String) DEFAULT '',
@@ -134,106 +140,28 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v6
 
     -- Indices. As with events_v4, no bloom filter on match_method /
     -- extractor_used / message_type — LowCardinality already covers them.
-    INDEX idx_host host_name TYPE bloom_filter GRANULARITY 4,
     INDEX idx_mac mac_address TYPE bloom_filter GRANULARITY 4,
     INDEX idx_client_id client_id TYPE bloom_filter GRANULARITY 4,
     INDEX idx_reservation_ipv6_na reservation_ipv6_na TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree()
-PARTITION BY toYYYYMM(timestamp)
-ORDER BY (host_name, relay_addr, timestamp)
-TTL timestamp + INTERVAL 90 DAY
+PARTITION BY toYYYYMM(event_time)
+ORDER BY (host_name, relay_addr, event_time)
+TTL event_time + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192;
-
--- Materialized views below all aggregate by `message_type` so operators can
--- separate Discover/Request/Renew rates from one another. The source events
--- tables expire at 90 days, but MVs are independent tables that grow until
--- their own TTL fires — set to 365 days here.
-
--- Materialized view for frequent clients (v4).
--- `mac_address` and `message_type` are nullable in events_v4 (a malformed v4
--- packet may omit option 53), but ORDER BY columns must be non-nullable
--- unless `allow_nullable_key` is on. mac_address rows without a MAC are
--- dropped (they aren't a "client"); message_type nulls are bucketed as
--- 'Unknown' so malformed-packet counts aren't silently lost.
-CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.frequent_clients_v4_mv
-ENGINE = SummingMergeTree()
-ORDER BY (host_name, mac_address, message_type, date)
-TTL date + INTERVAL 365 DAY
-AS SELECT
-    host_name,
-    assumeNotNull(mac_address) AS mac_address,
-    ifNull(message_type, 'Unknown') AS message_type,
-    toDate(timestamp) AS date,
-    count() AS request_count,
-    countIf(success = 1) AS success_count,
-    countIf(success = 0) AS failure_count
-FROM dhcp.events_v4
-WHERE mac_address IS NOT NULL
-GROUP BY host_name, mac_address, message_type, date;
-
--- Materialized view for frequent clients (v6)
-CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.frequent_clients_v6_mv
-ENGINE = SummingMergeTree()
-ORDER BY (host_name, mac_address, message_type, date)
-TTL date + INTERVAL 365 DAY
-AS SELECT
-    host_name,
-    assumeNotNull(mac_address) AS mac_address,
-    message_type,
-    toDate(timestamp) AS date,
-    count() AS request_count,
-    countIf(success = 1) AS success_count,
-    countIf(success = 0) AS failure_count
-FROM dhcp.events_v6
-WHERE mac_address IS NOT NULL
-GROUP BY host_name, mac_address, message_type, date;
-
--- Materialized view for relay statistics (per host)
--- events_v4.message_type is nullable (see frequent_clients_v4_mv note); bucket
--- nulls as 'Unknown' so the ORDER BY key stays non-nullable.
-CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.relay_stats_v4_mv
-ENGINE = SummingMergeTree()
-ORDER BY (host_name, relay_addr, message_type, date)
-TTL date + INTERVAL 365 DAY
-AS SELECT
-    host_name,
-    relay_addr,
-    ifNull(message_type, 'Unknown') AS message_type,
-    toDate(timestamp) AS date,
-    count() AS request_count,
-    countIf(success = 1) AS success_count,
-    countIf(success = 0) AS failure_count
-FROM dhcp.events_v4
-GROUP BY host_name, relay_addr, message_type, date;
-
-CREATE MATERIALIZED VIEW IF NOT EXISTS dhcp.relay_stats_v6_mv
-ENGINE = SummingMergeTree()
-ORDER BY (host_name, relay_addr, message_type, date)
-TTL date + INTERVAL 365 DAY
-AS SELECT
-    host_name,
-    relay_addr,
-    message_type,
-    toDate(timestamp) AS date,
-    count() AS request_count,
-    countIf(success = 1) AS success_count,
-    countIf(success = 0) AS failure_count
-FROM dhcp.events_v6
-GROUP BY host_name, relay_addr, message_type, date;
 
 -- Example queries:
 
 -- Most frequent DHCP clients (v4)
--- SELECT mac_address, sum(request_count) as total FROM dhcp.frequent_clients_v4_mv GROUP BY mac_address ORDER BY total DESC LIMIT 10;
+-- SELECT mac_address, count() as total FROM dhcp.events_v4 WHERE mac_address IS NOT NULL GROUP BY mac_address ORDER BY total DESC LIMIT 10;
 
 -- Clients that tried to get an address without a reservation
--- SELECT * FROM dhcp.events_v4 WHERE success = 0 AND failure_reason = 'NoReservation' ORDER BY timestamp DESC LIMIT 100;
--- SELECT * FROM dhcp.events_v6 WHERE success = 0 AND failure_reason = 'NoReservation' ORDER BY timestamp DESC LIMIT 100;
+-- SELECT * FROM dhcp.events_v4 WHERE success = 0 AND failure_reason = 'NoReservation' ORDER BY event_time DESC LIMIT 100;
+-- SELECT * FROM dhcp.events_v6 WHERE success = 0 AND failure_reason = 'NoReservation' ORDER BY event_time DESC LIMIT 100;
 
 -- Total successful requests today
--- SELECT count() FROM dhcp.events_v4 WHERE success = 1 AND timestamp >= today();
--- SELECT count() FROM dhcp.events_v6 WHERE success = 1 AND timestamp >= today();
+-- SELECT count() FROM dhcp.events_v4 WHERE success = 1 AND event_time >= today();
+-- SELECT count() FROM dhcp.events_v6 WHERE success = 1 AND event_time >= today();
 
 -- Clients with v4 address but no v6 (using reservation_ipv4 correlation)
 -- SELECT DISTINCT e4.mac_address, e4.reservation_ipv4
@@ -242,14 +170,14 @@ GROUP BY host_name, relay_addr, message_type, date;
 -- WHERE e4.success = 1 AND e4.mac_address IS NOT NULL AND e6.mac_address IS NULL;
 
 -- Requests by relay
--- SELECT relay_addr, sum(request_count) as total FROM dhcp.relay_stats_v4_mv GROUP BY relay_addr ORDER BY total DESC;
+-- SELECT relay_addr, count() as total FROM dhcp.events_v4 GROUP BY relay_addr ORDER BY total DESC;
 
 -- Requests by match method (how was reservation found)
 -- SELECT match_method, count() as total FROM dhcp.events_v4 WHERE success = 1 GROUP BY match_method;
 -- SELECT match_method, count() as total FROM dhcp.events_v6 WHERE success = 1 GROUP BY match_method;
 
 -- Requests matched by Option82 with specific extractor
--- SELECT * FROM dhcp.events_v4 WHERE match_method = 'option82' AND extractor_used = 'remote_only' ORDER BY timestamp DESC LIMIT 100;
+-- SELECT * FROM dhcp.events_v4 WHERE match_method = 'option82' AND extractor_used = 'remote_only' ORDER BY event_time DESC LIMIT 100;
 
 -- Breakdown by extractor used
 -- SELECT extractor_used, count() as total FROM dhcp.events_v4 WHERE match_method = 'option82' GROUP BY extractor_used;
@@ -260,10 +188,10 @@ GROUP BY host_name, relay_addr, message_type, date;
 -- Possible values: 'client_linklayer_address' (RFC 6939), 'peer_addr_eui64', 'duid'
 
 -- Events from specific server
--- SELECT * FROM dhcp.events_v4 WHERE host_name = 'dhcp-server-01' ORDER BY timestamp DESC LIMIT 100;
+-- SELECT * FROM dhcp.events_v4 WHERE host_name = 'dhcp-server-01' ORDER BY event_time DESC LIMIT 100;
 
 -- Request count per server
--- SELECT host_name, sum(request_count) as total FROM dhcp.relay_stats_v4_mv GROUP BY host_name;
+-- SELECT host_name, count() as total FROM dhcp.events_v4 GROUP BY host_name;
 
 -- Malformed or undeliverable traffic per relay (failure_reason values:
 -- 'ParseError' = undecodable datagram; 'NoRelayMsg'/'NestedRelay' = v6 relay
