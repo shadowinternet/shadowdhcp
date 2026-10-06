@@ -215,7 +215,7 @@ This creates:
 
 Read the comment in `clickhouse_schema.sql` for details on creating a user that only has permission to write to the DHCP tables.
 
-The ClickHouse table column layout closely mirrors the TCP JSON shape shown above, with two differences: an extra `event_time` `DateTime64(3)` column derived from `timestamp` by the schema, and the IPv6 prefix-delegation fields (`requested_ipv6_pd`, `reservation_ipv6_pd`) are split into separate columns — `*_prefix` (typed `IPv6`) and `*_length` (typed `UInt8`) — so prefixes can be queried with ClickHouse's IP functions (`IPv6CIDRToRange`, etc.).
+The ClickHouse table column layout closely mirrors the TCP JSON shape shown above, with a few differences: `host_name` and `server_version` (the shadowdhcp build, e.g. `0.3.0 (9979b53)`) are added to every row, an extra `event_time` `DateTime64(3)` column is derived from `timestamp` by the schema, and the IPv6 prefix-delegation fields (`requested_ipv6_pd`, `reservation_ipv6_pd`) are split into separate columns — `*_prefix` (typed `IPv6`) and `*_length` (typed `UInt8`) — so prefixes can be queried with ClickHouse's IP functions (`IPv6CIDRToRange`, etc.).
 
 ### 2. Add the clickhouse block to config.json
 

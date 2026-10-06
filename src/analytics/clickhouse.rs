@@ -22,12 +22,15 @@ const RETRY_SLEEP: Duration = Duration::from_secs(3);
 /// short ClickHouse maintenance windows without dropping the in-flight batch.
 const MAX_RETRIES: u32 = 100;
 
-/// Row shape sent to ClickHouse: event fields plus the server hostname.
-/// `ip_version` from the enum tag is intentionally dropped — the destination
-/// table is already known from the INSERT URL.
+/// Row shape sent to ClickHouse: the fields every row carries around a
+/// per-table event shape.
+/// `DhcpEventV4` directly, or `V6Row` for v6. `ip_version` from the enum tag
+/// is intentionally dropped, the destination table is already known from
+/// the INSERT URL.
 #[derive(Serialize)]
 struct HostRow<'a, T: Serialize> {
     host_name: &'a str,
+    server_version: &'a str,
     #[serde(flatten)]
     inner: &'a T,
 }
@@ -38,13 +41,24 @@ struct HostRow<'a, T: Serialize> {
 /// ClickHouse drops them because the URL sets `input_format_skip_unknown_fields=1`.
 #[derive(Serialize)]
 struct V6Row<'a> {
-    host_name: &'a str,
     requested_ipv6_pd_prefix: Option<Ipv6Addr>,
     requested_ipv6_pd_length: Option<u8>,
     reservation_ipv6_pd_prefix: Option<Ipv6Addr>,
     reservation_ipv6_pd_length: Option<u8>,
     #[serde(flatten)]
     inner: &'a DhcpEventV6,
+}
+
+impl<'a> V6Row<'a> {
+    fn new(event: &'a DhcpEventV6) -> Self {
+        Self {
+            requested_ipv6_pd_prefix: event.requested_ipv6_pd.map(|n| n.network()),
+            requested_ipv6_pd_length: event.requested_ipv6_pd.map(|n| n.prefix_len()),
+            reservation_ipv6_pd_prefix: event.reservation_ipv6_pd.map(|n| n.network()),
+            reservation_ipv6_pd_length: event.reservation_ipv6_pd.map(|n| n.prefix_len()),
+            inner: event,
+        }
+    }
 }
 
 /// The buffered rows bound for one table. Each event variant has its own,
@@ -128,6 +142,7 @@ struct ChEventsSink {
     base_url: String,
     auth: String,
     host_name: String,
+    server_version: String,
     v4: SubBatch,
     v6: SubBatch,
     dropped: Arc<AtomicU64>,
@@ -141,18 +156,17 @@ impl BatchSink<DhcpEvent> for ChEventsSink {
 
     fn push(&mut self, event: DhcpEvent) {
         let host_name = self.host_name.as_str();
+        let server_version = self.server_version.as_str();
         match event {
             DhcpEvent::V4(v4) => self.v4.push(&HostRow {
                 host_name,
+                server_version,
                 inner: &v4,
             }),
-            DhcpEvent::V6(v6) => self.v6.push(&V6Row {
+            DhcpEvent::V6(v6) => self.v6.push(&HostRow {
                 host_name,
-                requested_ipv6_pd_prefix: v6.requested_ipv6_pd.map(|n| n.network()),
-                requested_ipv6_pd_length: v6.requested_ipv6_pd.map(|n| n.prefix_len()),
-                reservation_ipv6_pd_prefix: v6.reservation_ipv6_pd.map(|n| n.network()),
-                reservation_ipv6_pd_length: v6.reservation_ipv6_pd.map(|n| n.prefix_len()),
-                inner: &v6,
+                server_version,
+                inner: &V6Row::new(&v6),
             }),
         }
     }
@@ -171,8 +185,8 @@ impl BatchSink<DhcpEvent> for ChEventsSink {
 
     fn on_start(&mut self) {
         info!(
-            "Starting ClickHouse writer -> {} (host_name={:?})",
-            self.base_url, self.host_name
+            "Starting ClickHouse writer -> {} (host_name={:?}, server_version={:?})",
+            self.base_url, self.host_name, self.server_version
         );
     }
 
@@ -206,6 +220,7 @@ pub fn clickhouse_writer(
         base_url,
         auth: basic_auth_header(&cfg.user, &cfg.password),
         host_name: cfg.hostname.unwrap_or_else(read_hostname),
+        server_version: crate::version(),
         dropped,
     };
 
@@ -220,4 +235,99 @@ pub fn clickhouse_writer(
         },
         &shutdown,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analytics::events::DhcpEventV4;
+    use std::net::Ipv4Addr;
+
+    fn test_sink() -> ChEventsSink {
+        ChEventsSink {
+            agent: build_agent(),
+            base_url: String::new(),
+            auth: String::new(),
+            host_name: "dhcp-01".into(),
+            server_version: "0.3.1 (abc1234)".into(),
+            v4: SubBatch::new("", "dhcp", "events_v4", 0),
+            v6: SubBatch::new("", "dhcp", "events_v6", 0),
+            dropped: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Exact JSONEachRow lines the sink writes. Key names must match the
+    /// columns in clickhouse_schema.sql; update both together.
+    #[test]
+    fn row_shapes() {
+        let mut sink = test_sink();
+
+        let mut v4 = DhcpEventV4::parse_error(Ipv4Addr::new(10, 0, 0, 1));
+        v4.timestamp = 1791158400123;
+        sink.push(DhcpEvent::V4(v4));
+
+        let mut v6 = DhcpEventV6::parse_error("2001:db8::1".parse().unwrap());
+        v6.timestamp = 1791158400123;
+        v6.requested_ipv6_pd = Some("2001:db8:100::/56".parse().unwrap());
+        v6.reservation_ipv6_pd = Some("2001:db8:200::/48".parse().unwrap());
+        sink.push(DhcpEvent::V6(v6));
+
+        let expected_v4 = concat!(
+            r#"{"#,
+            r#""host_name":"dhcp-01","#,
+            r#""server_version":"0.3.1 (abc1234)","#,
+            r#""timestamp":1791158400123,"#,
+            r#""message_type":null,"#,
+            r#""relay_addr":"10.0.0.1","#,
+            r#""mac_address":null,"#,
+            r#""option82_circuit":null,"#,
+            r#""option82_remote":null,"#,
+            r#""option82_subscriber":null,"#,
+            r#""reservation_ipv4":null,"#,
+            r#""reservation_mac":null,"#,
+            r#""reservation_option82_circuit":null,"#,
+            r#""reservation_option82_remote":null,"#,
+            r#""reservation_option82_subscriber":null,"#,
+            r#""match_method":null,"#,
+            r#""extractor_used":null,"#,
+            r#""success":false,"#,
+            r#""failure_reason":"ParseError""#,
+            "}\n",
+        );
+        let expected_v6 = concat!(
+            r#"{"#,
+            r#""host_name":"dhcp-01","#,
+            r#""server_version":"0.3.1 (abc1234)","#,
+            r#""requested_ipv6_pd_prefix":"2001:db8:100::","#,
+            r#""requested_ipv6_pd_length":56,"#,
+            r#""reservation_ipv6_pd_prefix":"2001:db8:200::","#,
+            r#""reservation_ipv6_pd_length":48,"#,
+            r#""timestamp":1791158400123,"#,
+            r#""message_type":"Unknown","#,
+            r#""xid":"","#,
+            r#""relay_addr":"2001:db8::1","#,
+            r#""relay_link_addr":"::","#,
+            r#""relay_peer_addr":"::","#,
+            r#""mac_address":null,"#,
+            r#""client_id":null,"#,
+            r#""option1837_interface":null,"#,
+            r#""option1837_remote":null,"#,
+            r#""requested_ipv6_na":null,"#,
+            r#""requested_ipv6_pd":"2001:db8:100::/56","#,
+            r#""reservation_ipv6_na":null,"#,
+            r#""reservation_ipv6_pd":"2001:db8:200::/48","#,
+            r#""reservation_ipv4":null,"#,
+            r#""reservation_mac":null,"#,
+            r#""reservation_duid":null,"#,
+            r#""reservation_option1837_interface":null,"#,
+            r#""reservation_option1837_remote":null,"#,
+            r#""match_method":null,"#,
+            r#""extractor_used":null,"#,
+            r#""success":false,"#,
+            r#""failure_reason":"ParseError""#,
+            "}\n",
+        );
+        assert_eq!(String::from_utf8(sink.v4.body).unwrap(), expected_v4);
+        assert_eq!(String::from_utf8(sink.v6.body).unwrap(), expected_v6);
+    }
 }

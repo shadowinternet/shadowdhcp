@@ -33,6 +33,13 @@ mod v6;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GITHUB_SHA: Option<&str> = option_env!("GITHUB_SHA");
 
+/// Version with short commit, e.g. `0.3.0 (9979b53)`. The commit is only
+/// known for GitHub Actions builds; local builds report `unknown`.
+pub fn version() -> String {
+    let commit = GITHUB_SHA.map_or("unknown", |sha| sha.get(..7).unwrap_or(sha));
+    format!("{VERSION} ({commit})")
+}
+
 fn main() {
     let mut args = pico_args::Arguments::from_env();
     if args.contains(["-h", "--help"]) {
@@ -58,11 +65,7 @@ fn main() {
         return;
     }
     if args.contains("--version") {
-        let commit = match GITHUB_SHA {
-            Some(sha) => &sha[0..7],
-            None => "unknown",
-        };
-        println!("{VERSION} ({commit})");
+        println!("{}", version());
         return;
     }
 
@@ -315,7 +318,7 @@ config.json:
         },
         {
             "net": "100.100.2.0/24",
-            "gateway": "100.100.3.1"
+            "gateway": "100.100.2.1"
         }
     ],
     "option82_extractors": [

@@ -48,8 +48,11 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v4
     timestamp Int64 CODEC(Delta, ZSTD),
     event_time DateTime64(3) DEFAULT fromUnixTimestamp64Milli(timestamp) CODEC(Delta, ZSTD),
 
-    -- Server identification
+    -- Server identification. server_version is the shadowdhcp build that
+    -- wrote the row, e.g. '0.3.0 (9979b53)'; the commit is 'unknown' for
+    -- builds made outside GitHub Actions.
     host_name LowCardinality(String) DEFAULT '',
+    server_version LowCardinality(String) DEFAULT '',
 
     -- Message info
     message_type LowCardinality(Nullable(String)),
@@ -101,8 +104,11 @@ CREATE TABLE IF NOT EXISTS dhcp.events_v6
     timestamp Int64 CODEC(Delta, ZSTD),
     event_time DateTime64(3) DEFAULT fromUnixTimestamp64Milli(timestamp) CODEC(Delta, ZSTD),
 
-    -- Server identification
+    -- Server identification. server_version is the shadowdhcp build that
+    -- wrote the row, e.g. '0.3.0 (9979b53)'; the commit is 'unknown' for
+    -- builds made outside GitHub Actions.
     host_name LowCardinality(String) DEFAULT '',
+    server_version LowCardinality(String) DEFAULT '',
 
     -- Message info
     message_type LowCardinality(String),
@@ -192,6 +198,9 @@ SETTINGS index_granularity = 8192;
 
 -- Request count per server
 -- SELECT host_name, count() as total FROM dhcp.events_v4 GROUP BY host_name;
+
+-- Which shadowdhcp builds have been running, and when
+-- SELECT host_name, server_version, min(event_time) AS first_seen, max(event_time) AS last_seen FROM dhcp.events_v6 GROUP BY host_name, server_version ORDER BY first_seen;
 
 -- Malformed or undeliverable traffic per relay (failure_reason values:
 -- 'ParseError' = undecodable datagram; 'NoRelayMsg'/'NestedRelay' = v6 relay

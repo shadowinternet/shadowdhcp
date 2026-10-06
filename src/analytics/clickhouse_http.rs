@@ -72,9 +72,10 @@ pub fn read_hostname() -> String {
         .unwrap_or_default()
 }
 
-/// Build the shared ureq agent used by both writers.
+/// Build the ureq agent used by the ClickHouse writer
 pub fn build_agent() -> Agent {
     Agent::config_builder()
+        .user_agent(format!("shadowdhcp/{}", crate::version()))
         .timeout_global(Some(REQUEST_TIMEOUT))
         .timeout_connect(Some(CONNECT_TIMEOUT))
         .build()
