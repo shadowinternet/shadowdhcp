@@ -30,6 +30,9 @@
 #   * Creates an admin SQL user with a password and a network allowlist
 #     (IPv4/IPv6 CIDRs) supplied at prompt
 #   * Applies ClickHouse's recommended Linux tuning (sysctl, ulimits, THP)
+#   * Trims ClickHouse's own logging: server logs at warning level, the
+#     per-second profiling system tables disabled, and 14-30 day TTLs on the
+#     system logs that are kept (query_log, part_log, session_log, error_log)
 #
 # Why built-in ACME (instead of certbot / acme.sh / lego):
 #   ClickHouse 25.11 ships its own ACME client, so there is nothing to add or
@@ -433,6 +436,46 @@ cat >"$CONF_D/30-openssl.xml" <<'EOF'
 </clickhouse>
 EOF
 install -d -m 0750 -o clickhouse -g clickhouse /var/lib/clickhouse/acme
+
+# 40-system-logs.xml: ClickHouse logs heavily about itself by default. Several
+# system.* tables have no TTL and grow until the disk fills, and the server
+# log files default to trace level. Turn off the per-second profiling tables
+# and give the useful ones a retention period. Keep query_log: its exception
+# column is the quickest way to debug failed inserts from the DHCP servers.
+log "Writing system log retention ($CONF_D/40-system-logs.xml)"
+cat >"$CONF_D/40-system-logs.xml" <<'EOF'
+<clickhouse>
+    <logger>
+        <level>warning</level>
+    </logger>
+
+    <!-- Off: sampling profiler, per-second metric snapshots, server log copy -->
+    <trace_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <latency_log remove="1"/>
+    <query_metric_log remove="1"/>
+    <text_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+
+    <!-- Kept, with retention -->
+    <query_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </query_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+    </part_log>
+    <session_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </session_log>
+    <error_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </error_log>
+</clickhouse>
+EOF
 
 #############################################
 # Users
